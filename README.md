@@ -93,10 +93,17 @@ Single payment requests
 Customers
   customer list [--page ...]            GET /hl/v1/customer
   customer create --data <json|@file>   POST /hl/v1/customer/create
+  customer search <email>               GET /hl/v1/customer/detail?email=
+  customer update <from> <to>           POST /hl/v1/customer/update
+  customer magic-link <email>           POST /hl/v1/customer/login/portal
 
 Transactions
   tx list   [--page ...]                GET /hl/v1/transactions          (paid)
   tx unpaid [--page ...]                GET /hl/v1/transactions/unpaid
+  tx daily                              GET /hl/v1/transactions/daily
+
+Reviews
+  review list [--page ...]              GET /hl/v1/reviews
 
 Dynamic QR
   qrcode <amount>                       POST /hl/v1/qrcode/create

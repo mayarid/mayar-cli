@@ -43,10 +43,17 @@ ${ui.bold('Single payment requests:')}
 ${ui.bold('Customers:')}
   customer list [--page N --pageSize N]
   customer create --data <json|@file.json>
+  customer search <email>             Look up a customer by email
+  customer update <fromEmail> <toEmail>
+  customer magic-link <email>         Email a portal login link to the customer
 
 ${ui.bold('Transactions:')}
   tx list [--page N --pageSize N]     Paid transactions
   tx unpaid [--page N --pageSize N]   Unpaid transactions
+  tx daily                            Today's totals (volume + count)
+
+${ui.bold('Reviews:')}
+  review list [--page N --pageSize N]
 
 ${ui.bold('Dynamic QR:')}
   qrcode <amount>
@@ -170,6 +177,8 @@ async function run(argv) {
       qr:           './commands/qrcode',
       qrcode:       './commands/qrcode',
       webhook:      './commands/webhook',
+      review:       './commands/review',
+      reviews:      './commands/review',
     };
     const handler = handlers[cmd];
     if (!handler) {
