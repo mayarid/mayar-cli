@@ -1,6 +1,6 @@
 {
   "name": "mayar",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Zero-dependency Node.js CLI for the Mayar API (production endpoint).",
   "bin": {
     "mayar": "bin/mayar.js"
