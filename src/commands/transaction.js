@@ -2,7 +2,7 @@ const api = require('../api');
 const ui = require('../ui');
 const { checkResp } = require('../util');
 
-const USAGE = 'Usage: mayar tx <list|unpaid>';
+const USAGE = 'Usage: mayar tx <list|unpaid|daily>';
 
 function fmtDate(v) {
   if (v == null) return '';
@@ -44,6 +44,17 @@ async function run({ apiKey, flags, positional }) {
       checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderTx(res.body); return;
+    }
+    case 'daily': {
+      const res = await api.request('GET', '/hl/v1/transactions/daily', { apiKey });
+      checkResp(res);
+      if (flags.json) return ui.jsonOut(res.body);
+      const d = (res.body && res.body.data) || {};
+      if (d.date)     process.stdout.write(`${ui.bold('Date:')}            ${d.date}\n`);
+      if (d.tpvCount != null) process.stdout.write(`${ui.bold('Total volume:')}   ${Number(d.tpvCount).toLocaleString('id-ID')}\n`);
+      if (d.trxCount != null) process.stdout.write(`${ui.bold('Transactions:')}   ${d.trxCount}\n`);
+      if (!d.date && !d.tpvCount && !d.trxCount) ui.jsonOut(res.body);
+      return;
     }
     default:
       throw new Error(USAGE);

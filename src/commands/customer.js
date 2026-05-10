@@ -2,10 +2,10 @@ const api = require('../api');
 const ui = require('../ui');
 const { checkResp, readData } = require('../util');
 
-const USAGE = 'Usage: mayar customer <list|create>';
+const USAGE = 'Usage: mayar customer <list|create|search|update|magic-link>';
 
 async function run({ apiKey, flags, positional }) {
-  const [sub] = positional;
+  const [sub, ...rest] = positional;
   switch (sub) {
     case 'list': {
       const res = await api.request('GET', '/hl/v1/customer', {
@@ -24,6 +24,28 @@ async function run({ apiKey, flags, positional }) {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar customer create requires --data \'{"name":"...","email":"...","mobile":"..."}\'');
       const res = await api.request('POST', '/hl/v1/customer/create', { apiKey, body });
+      checkResp(res); ui.jsonOut(res.body); return;
+    }
+    case 'search': {
+      if (!rest[0]) throw new Error('Usage: mayar customer search <email>');
+      const res = await api.request('GET', '/hl/v1/customer/detail', {
+        apiKey, query: { email: rest[0] },
+      });
+      checkResp(res); ui.jsonOut(res.body); return;
+    }
+    case 'update': {
+      if (rest.length < 2) throw new Error('Usage: mayar customer update <fromEmail> <toEmail>');
+      const res = await api.request('POST', '/hl/v1/customer/update', {
+        apiKey, body: { fromEmail: rest[0], toEmail: rest[1] },
+      });
+      checkResp(res); ui.jsonOut(res.body); return;
+    }
+    case 'magic-link':
+    case 'magiclink': {
+      if (!rest[0]) throw new Error('Usage: mayar customer magic-link <email>');
+      const res = await api.request('POST', '/hl/v1/customer/login/portal', {
+        apiKey, body: { email: rest[0] },
+      });
       checkResp(res); ui.jsonOut(res.body); return;
     }
     default:
