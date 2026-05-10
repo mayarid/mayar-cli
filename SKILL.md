@@ -1,7 +1,7 @@
 ---
 name: mayar
 display_name: Mayar CLI
-version: "0.1.8"
+version: "0.1.9"
 description: >
   Interact with the Mayar payment platform (invoices, products, payments,
   customers, transactions, webhooks, QR codes) from any AI agent or shell.
@@ -41,6 +41,7 @@ capabilities:
   - payments
   - customers
   - transactions
+  - reviews
   - webhooks
   - qrcode
   - balance
@@ -155,6 +156,9 @@ npx -y mayar@latest payment create --data '<json>'
 ```bash
 npx -y mayar@latest customer list [--page N --pageSize N]
 npx -y mayar@latest customer create --data '<json>'
+npx -y mayar@latest customer search <email>            # look up by email
+npx -y mayar@latest customer update <fromEmail> <toEmail>
+npx -y mayar@latest customer magic-link <email>        # email portal login link
 ```
 
 ### Transactions
@@ -162,6 +166,13 @@ npx -y mayar@latest customer create --data '<json>'
 ```bash
 npx -y mayar@latest tx list   [--page N --pageSize N]   # paid
 npx -y mayar@latest tx unpaid [--page N --pageSize N]   # unpaid
+npx -y mayar@latest tx daily                            # today's volume + count
+```
+
+### Reviews
+
+```bash
+npx -y mayar@latest review list [--page N --pageSize N]
 ```
 
 ### Dynamic QR
