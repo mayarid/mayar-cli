@@ -4,13 +4,28 @@ Command-line interface for the [Mayar](https://docs.mayar.id) API. Zero runtime 
 
 ## Install
 
+**One-liner (no npm required):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh | sh
+```
+
+Downloads the latest tarball from the npm registry, extracts to `~/.local/share/mayar`, and symlinks the binary to `~/.local/bin/mayar`. Requires only `node>=18`, `curl`, and `tar`. Override paths or pin a version:
+
+```bash
+MAYAR_VERSION=0.1.9 MAYAR_BIN_DIR=/usr/local/bin \
+  curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh | sh
+```
+
+**Via npm:**
+
 ```bash
 npm install -g mayar
 # or run without installing:
 npx mayar --help
 ```
 
-Or from source:
+**From source:**
 
 ```bash
 git clone https://github.com/mayarid/mayar-cli.git
