@@ -1,7 +1,7 @@
 {
   "name": "cli",
   "version": "1.0.0",
-  "tool": "jonggrang",
+  "tool": "claude",
   "project": {
     "type": "api",
     "stack": "node-typescript",
