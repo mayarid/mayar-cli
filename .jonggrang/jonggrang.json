@@ -23,7 +23,7 @@
     "pre_implement": [],
     "post_implement": [],
     "pre_commit": [
-      "echo 'no test command configured'"
+      "node --test"
     ],
     "post_commit": [],
     "task_complete": [],
