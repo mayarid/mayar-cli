@@ -1,0 +1,50 @@
+{
+  "name": "cli",
+  "version": "1.0.0",
+  "tool": "jonggrang",
+  "project": {
+    "type": "api",
+    "stack": "node-typescript",
+    "template": "node-typescript"
+  },
+  "mode": {
+    "work": "solo",
+    "autonomy": "autonomous",
+    "max_team_size": 1
+  },
+  "work": {
+    "max_iterations": 10,
+    "retry_limit": 2,
+    "kill_after_fails": 3,
+    "branch_prefix": "feat/",
+    "commit_prefix": "feat|fix|refactor|test|docs|chore"
+  },
+  "hooks": {
+    "pre_implement": [],
+    "post_implement": [],
+    "pre_commit": [
+      "echo 'no test command configured'"
+    ],
+    "post_commit": [],
+    "task_complete": [],
+    "session_end": []
+  },
+  "testing": {
+    "framework": "none",
+    "command": "echo 'no test command configured'",
+    "coverage_threshold": 80
+  },
+  "ci": {
+    "provider": "none",
+    "auto_setup": false
+  },
+  "skills": {
+    "directory": "./.claude/skills",
+    "custom": []
+  },
+  "review": {
+    "security": true,
+    "performance": true,
+    "coverage": true
+  }
+}

@@ -1,0 +1,56 @@
+# CLAUDE.md — Jonggrang Project Instructions
+
+This project is managed by **Jonggrang**, an AI development workflow orchestrator.
+
+## Before You Start
+
+Read these files in order:
+1. `.claude/SKILL.md` — Full agent protocol (how to execute tasks)
+2. `AGENTS.md` — Project-specific conventions and patterns
+3. `.jonggrang/progress.txt` — Learnings from previous sessions
+4. `.jonggrang/jonggrang.json` — Project config
+
+Then run `jonggrang task next` to find your task assignment — do NOT read `.jonggrang/jonggrang-tasks.json` directly.
+
+## Quick Protocol
+
+1. Read context files above
+2. Find your task: `jonggrang task next` (or `jonggrang task show <id>`)
+3. If task has `"skill"` field, read `.claude/skills/<skill>/SKILL.md`
+4. Start work: `jonggrang task update <id> --status in_progress`
+5. Implement the task following AGENTS.md conventions
+6. Run validation: typecheck, tests, lint
+7. Mark done: `jonggrang task done <id>`
+8. Append learnings to `.jonggrang/progress.txt`
+9. Commit with: `git commit -m "type(scope): description"`
+
+## Project Info
+
+- **Name**: cli
+- **Type**: api
+- **Stack**: node-typescript
+- **Test command**: echo 'no test command configured'
+
+## Bug Reporting
+
+If you find a defect **outside the scope of your current task**, report it:
+
+```bash
+jonggrang bug "description of what is broken" --feature <feature_id>
+# "Create a task now?" → y
+```
+
+- Bug is saved to `.jonggrang/.output/features/<feature_id>/bugs.md`
+- A BUGFIX task is created immediately and queued for the next work cycle
+- Do NOT fix out-of-scope bugs inline — complete your current task first
+
+Get the `feature_id` by running: `jonggrang task show <id>` — look for the `feature_id` field in the output.
+
+## Rules
+
+- Only modify files listed in your task's `"files"` array
+- Follow patterns in AGENTS.md
+- One atomic commit per task
+- Do not skip validation
+- Log discoveries in `.jonggrang/progress.txt`
+- Report out-of-scope bugs with `jonggrang bug` (see above)

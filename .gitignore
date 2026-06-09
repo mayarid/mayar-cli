@@ -4,3 +4,8 @@ node_modules/
 *.log
 .env
 .env.*
+
+# Jonggrang ephemeral state
+.jonggrang/.ephemeral/
+.jonggrang/locks/
+.jonggrang/.worktree/
