@@ -196,4 +196,4 @@ async function run(argv) {
   }
 }
 
-module.exports = { run };
+module.exports = { run, parseFlags };
