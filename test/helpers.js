@@ -5,6 +5,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const util = require('node:util');
 
 // (1) stdout/stderr capture.
 // Monkey-patches process.stdout.write, process.stderr.write, console.log and
@@ -26,18 +27,19 @@ function captureOutput() {
   let err = '';
   let restored = false;
 
-  process.stdout.write = (chunk, encoding, cb) => {
-    out += typeof chunk === 'string' ? chunk : chunk.toString(encoding || 'utf8');
-    if (typeof encoding === 'function') encoding();
-    else if (typeof cb === 'function') cb();
-    return true;
-  };
-  process.stderr.write = (chunk, encoding, cb) => {
-    err += typeof chunk === 'string' ? chunk : chunk.toString(encoding || 'utf8');
-    if (typeof encoding === 'function') encoding();
-    else if (typeof cb === 'function') cb();
-    return true;
-  };
+  // Builds a write() replacement that appends to the given sink and honours
+  // Node's (chunk, encoding?, cb?) signature where either trailing arg is the
+  // completion callback. Shared by stdout and stderr to avoid duplication.
+  function patchedWriter(append) {
+    return (chunk, encoding, cb) => {
+      append(typeof chunk === 'string' ? chunk : chunk.toString(encoding || 'utf8'));
+      if (typeof encoding === 'function') encoding();
+      else if (typeof cb === 'function') cb();
+      return true;
+    };
+  }
+  process.stdout.write = patchedWriter((s) => { out += s; });
+  process.stderr.write = patchedWriter((s) => { err += s; });
   // Route console.* through the patched writers so formatting matches Node's.
   console.log = (...args) => process.stdout.write(formatLog(args) + '\n');
   console.error = (...args) => process.stderr.write(formatLog(args) + '\n');
@@ -61,7 +63,7 @@ function captureOutput() {
 
 function formatLog(args) {
   return args
-    .map((a) => (typeof a === 'string' ? a : require('node:util').inspect(a)))
+    .map((a) => (typeof a === 'string' ? a : util.inspect(a)))
     .join(' ');
 }
 
