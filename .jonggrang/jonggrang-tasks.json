@@ -16,8 +16,8 @@
         "test/helpers.js",
         "package.json"
       ],
-      "started_at": "2026-06-09T08:17:33.874Z",
-      "completed_at": "2026-06-09T08:18:51.022Z",
+      "started_at": null,
+      "completed_at": "2026-06-09T08:19:11.193Z",
       "error_log": []
     },
     {
@@ -33,8 +33,8 @@
       "files": [
         "src/cli.js"
       ],
-      "started_at": "2026-06-09T08:19:23.849Z",
-      "completed_at": "2026-06-09T08:19:40.802Z",
+      "started_at": null,
+      "completed_at": "2026-06-09T08:19:53.717Z",
       "error_log": []
     },
     {
@@ -52,8 +52,8 @@
       "files": [
         "test/util.test.js"
       ],
-      "started_at": "2026-06-09T08:20:47.344Z",
-      "completed_at": "2026-06-09T08:21:30.223Z",
+      "started_at": null,
+      "completed_at": "2026-06-09T08:21:58.176Z",
       "error_log": []
     },
     {
@@ -72,8 +72,8 @@
       "files": [
         "test/cli.test.js"
       ],
-      "started_at": "2026-06-09T08:22:24.459Z",
-      "completed_at": "2026-06-09T08:23:01.764Z",
+      "started_at": null,
+      "completed_at": "2026-06-09T08:23:20.088Z",
       "error_log": []
     },
     {
@@ -91,8 +91,8 @@
       "files": [
         "test/config.test.js"
       ],
-      "started_at": "2026-06-09T08:24:11.154Z",
-      "completed_at": "2026-06-09T08:25:08.173Z",
+      "started_at": null,
+      "completed_at": "2026-06-09T08:25:34.075Z",
       "error_log": []
     },
     {
@@ -110,8 +110,8 @@
       "files": [
         "test/ui.test.js"
       ],
-      "started_at": "2026-06-09T08:25:52.439Z",
-      "completed_at": "2026-06-09T08:27:08.489Z",
+      "started_at": null,
+      "completed_at": "2026-06-09T08:27:42.498Z",
       "error_log": []
     },
     {
@@ -133,8 +133,8 @@
         ".jonggrang/jonggrang.json",
         ".jonggrang/progress.txt"
       ],
-      "started_at": "2026-06-09T08:28:15.916Z",
-      "completed_at": "2026-06-09T08:28:53.073Z",
+      "started_at": null,
+      "completed_at": "2026-06-09T08:29:03.723Z",
       "error_log": []
     }
   ]
