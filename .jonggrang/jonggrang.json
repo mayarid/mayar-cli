@@ -46,6 +46,5 @@
     "security": true,
     "performance": true,
     "coverage": true
-  },
-  "autonomy": "autonomous"
+  }
 }
