@@ -1,7 +1,8 @@
 const https = require('https');
 const { URL } = require('url');
+const config = require('./config');
 
-const BASE_URL = process.env.MAYAR_API_URL || 'https://api.mayar.id';
+const BASE_URL = config.apiBaseUrl();
 const VERSION = require('../package.json').version;
 
 function request(method, pathname, { apiKey, body, query } = {}) {
