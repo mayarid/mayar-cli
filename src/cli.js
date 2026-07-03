@@ -10,6 +10,7 @@ ${ui.bold('Usage:')}
 
 ${ui.bold('Setup:')}
   init                                Run first-time setup (or re-configure API key)
+  login [--no-browser]                Sign in via browser (Google OAuth) and save auth token
   api-key <key>                       Save API key non-interactively
   config show                         Show config path and masked API key
   config reset                        Remove the saved API key
@@ -73,10 +74,13 @@ ${ui.bold('Global flags:')}
 
 ${ui.bold('Environment:')}
   MAYAR_API_KEY         Used when --api-key is not given and no config is saved
-  MAYAR_API_URL         Override API base URL (default: https://api.mayar.id)
+  MAYAR_API_URL         Override API base URL
+  MAYAR_AUTH_URL        Override auth server base URL (used by 'login')
+  NODE_ENV=development  Target the sandbox (api/auth .mayar.club) instead of production
 
 ${ui.dim('Resolution order: --api-key flag > MAYAR_API_KEY env > saved config.')}
-${ui.dim('Endpoint: MAYAR_API_URL env or https://api.mayar.id (default)')}
+${ui.dim('API endpoint:  MAYAR_API_URL, else NODE_ENV=development → api.mayar.club, else api.mayar.id')}
+${ui.dim('Auth endpoint: MAYAR_AUTH_URL, else NODE_ENV=development → auth.mayar.club, else auth.mayar.id')}
 ${ui.dim('Config:   ~/.config/mayar/config.json (chmod 600)')}
 `;
 
@@ -88,6 +92,7 @@ function parseFlags(argv) {
     if (a === '--') { positional.push(...argv.slice(i + 1)); break; }
     if (a === '--json') flags.json = true;
     else if (a === '--force') flags.force = true;
+    else if (a === '--no-browser') flags['no-browser'] = true;
     else if (a === '--api-key') flags.apiKey = argv[++i];
     else if (a.startsWith('--api-key=')) flags.apiKey = a.slice('--api-key='.length);
     else if (a === '--page') flags.page = argv[++i];
@@ -139,6 +144,10 @@ async function run(argv) {
     if (cmd === 'init') {
       const init = require('./commands/init');
       return await init.run({ flags });
+    }
+    if (cmd === 'login') {
+      const login = require('./commands/login');
+      return await login.run({ flags });
     }
     if (cmd === 'api-key' || cmd === 'apikey') {
       const apikey = require('./commands/apikey');

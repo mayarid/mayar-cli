@@ -40,4 +40,21 @@ function clear() {
   try { fs.unlinkSync(file); return true; } catch (_) { return false; }
 }
 
-module.exports = { load, save, clear, file, dir };
+// Environment resolution -----------------------------------------------------
+// NODE_ENV=development targets the *.mayar.club sandbox; anything else targets
+// production *.mayar.id. Explicit env overrides always win.
+function isDev() {
+  return process.env.NODE_ENV === 'development';
+}
+
+function apiBaseUrl() {
+  if (process.env.MAYAR_API_URL) return process.env.MAYAR_API_URL;
+  return isDev() ? 'https://api.mayar.club' : 'https://api.mayar.id';
+}
+
+function authBaseUrl() {
+  if (process.env.MAYAR_AUTH_URL) return process.env.MAYAR_AUTH_URL;
+  return isDev() ? 'https://auth.mayar.club' : 'https://auth.mayar.id';
+}
+
+module.exports = { load, save, clear, file, dir, isDev, apiBaseUrl, authBaseUrl };
