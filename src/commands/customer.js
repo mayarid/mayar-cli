@@ -8,9 +8,7 @@ async function run({ apiKey, flags, positional }) {
   const [sub, ...rest] = positional;
   switch (sub) {
     case 'list': {
-      const res = await api.request('GET', '/hl/v1/customer', {
-        apiKey, query: { page: flags.page, pageSize: flags.pageSize },
-      });
+      const res = await api.request('GET', '/hl/v2/customers', { apiKey });
       checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       const data = (res.body && res.body.data) || [];
@@ -23,19 +21,19 @@ async function run({ apiKey, flags, positional }) {
     case 'create': {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar customer create requires --data \'{"name":"...","email":"...","mobile":"..."}\'');
-      const res = await api.request('POST', '/hl/v1/customer/create', { apiKey, body });
+      const res = await api.request('POST', '/hl/v2/customers/create', { apiKey, body });
       checkResp(res); ui.jsonOut(res.body); return;
     }
     case 'search': {
       if (!rest[0]) throw new Error('Usage: mayar customer search <email>');
-      const res = await api.request('GET', '/hl/v1/customer/detail', {
+      const res = await api.request('GET', '/hl/v2/customers/detail', {
         apiKey, query: { email: rest[0] },
       });
       checkResp(res); ui.jsonOut(res.body); return;
     }
     case 'update': {
       if (rest.length < 2) throw new Error('Usage: mayar customer update <fromEmail> <toEmail>');
-      const res = await api.request('POST', '/hl/v1/customer/update', {
+      const res = await api.request('POST', '/hl/v2/customers/update', {
         apiKey, body: { fromEmail: rest[0], toEmail: rest[1] },
       });
       checkResp(res); ui.jsonOut(res.body); return;
@@ -43,7 +41,7 @@ async function run({ apiKey, flags, positional }) {
     case 'magic-link':
     case 'magiclink': {
       if (!rest[0]) throw new Error('Usage: mayar customer magic-link <email>');
-      const res = await api.request('POST', '/hl/v1/customer/login/portal', {
+      const res = await api.request('POST', '/hl/v2/customers/portal-login', {
         apiKey, body: { email: rest[0] },
       });
       checkResp(res); ui.jsonOut(res.body); return;

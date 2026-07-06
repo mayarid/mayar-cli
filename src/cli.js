@@ -3,7 +3,7 @@ const config = require('./config');
 
 const VERSION = require('../package.json').version;
 
-const HELP = () => `${ui.bold('mayar')} ${ui.dim('— Mayar API CLI (production)')}
+const HELP = () => `${ui.bold('mayar')} ${ui.dim('— Mayar API CLI (v2)')}
 
 ${ui.bold('Usage:')}
   mayar <command> [args] [flags]
@@ -20,62 +20,116 @@ ${ui.bold('Account:')}
   balance                             Get account balance
 
 ${ui.bold('Invoices:')}
-  invoice list [--page N --pageSize N]
+  invoice list [--limit N --after CURSOR]
   invoice get <id>
   invoice close <id>
   invoice reopen <id>
-  invoice create --data <json|@file.json>
+  invoice status <id> <open|close|active|closed|unlisted>
+  invoice edit <id> --data <json|@file>
+  invoice filter --email <email> [--limit N --after CURSOR]
+  invoice create --data <json|@file>
 
 ${ui.bold('Products:')}
-  product list [--page N --pageSize N]
+  product list [--limit N --after CURSOR --search Q --type T]
   product search <keyword>
   product type <ebook|course|membership|saas|event|webinar|...>
   product get <id>
   product close <id>
   product reopen <id>
-  product status <id> <open|close|active|closed|unlisted>   [v2, adds unlisted]
+  product status <id> <open|close|active|closed|unlisted>
+  product transactions <id> [--limit N --after CURSOR]
+  product create --type <T> --data <json|@file>
+  product edit <id> --data <json|@file>
 
 ${ui.bold('Single payment requests:')}
-  payment list
+  payment list [--limit N --after CURSOR --status paid|unpaid|closed]
   payment get <id>
-  payment close <id>
-  payment reopen <id>
-  payment create --data <json|@file.json>
+  payment status <id> <open|close|active|closed|unlisted>
+  payment edit <id> --data <json|@file>
+  payment create --data <json|@file>
 
 ${ui.bold('Customers:')}
-  customer list [--page N --pageSize N]
-  customer create --data <json|@file.json>
-  customer search <email>             Look up a customer by email
+  customer list
+  customer create --data <json|@file>
+  customer search <email>
   customer update <fromEmail> <toEmail>
-  customer magic-link <email>         Email a portal login link to the customer
+  customer magic-link <email>
 
 ${ui.bold('Transactions:')}
-  tx list [--page N --pageSize N]     Paid transactions
-  tx unpaid [--page N --pageSize N]   Unpaid transactions
-  tx daily                            Today's totals (volume + count)
+  tx list [--limit N --after CURSOR --status --customerId --startAt --endAt]
+  tx unpaid [--limit N --after CURSOR]
+  tx daily
+  tx product <productId> [--limit N --after CURSOR]
 
 ${ui.bold('Reviews:')}
-  review list [--page N --pageSize N]
-  review stats [productId]            Aggregated ratings (merchant-wide or per product) [v2]
+  review list [--limit N --after CURSOR --status --paymentLinkId --rating]
+  review stats [productId]
+  review create --data <json|@file>
+  review update <id> --data <json|@file>
+  review bulk-status --data <json|@file>       (array of {id,status})
+  review product <paymentLinkId> [--limit N --after CURSOR]
+  review product-customer <paymentLinkId> --customerId <id>
 
-${ui.bold('Discounts:')}
-  discount validate <code> <paymentLinkId>   Check if a coupon applies to a checkout [v2]
+${ui.bold('Discounts (coupons):')}
+  discount create --data <json|@file>
+  discount get <id>
+  discount validate <code> <paymentLinkId>
+  discount check <code>
 
-${ui.bold('QR & Payment Channels:')}
+${ui.bold('Bundling:')}
+  bundling list [--limit N --after CURSOR]
+  bundling get <id>
+
+${ui.bold('Installments:')}
+  installment list [--limit N --after CURSOR]
+  installment get <id>
+  installment create --data <json|@file>
+
+${ui.bold('Memberships:')}
+  membership members --productId <id> [--limit N --after CURSOR]
+  membership tiers   --productId <id> [--limit N --after CURSOR]
+  membership register --data <json|@file>
+  membership get <memberId> --productId <id>
+  membership update <memberId> --productId <id> [--data <json|@file>]
+  membership cancel <memberId> --productId <id>
+  membership create-invoice <memberId> --productId <id>
+
+${ui.bold('Credit wallets:')}
+  credit balance --customerId <id> --productId <id> [--tierId <id>]
+  credit add    --data <json|@file>       ({customerId, productId, amount})
+  credit spend  --data <json|@file>       ({customerId, productId, amount})
+  credit history <customerId> --productId <id> [--page N --limit N]
+  credit register-usage      --data <json|@file>
+  credit register-membership --data <json|@file>
+  credit checkout            --data <json|@file>
+
+${ui.bold('SaaS licensing:')}
+  saas activate   <licenseCode> <productId>
+  saas deactivate <licenseCode> <productId>
+  saas verify     <licenseCode> <productId>
+
+${ui.bold('Software licensing:')}
+  software verify <licenseCode> <productId>
+
+${ui.bold('QR & payment channels:')}
   qrcode <amount>                     Dynamic QR for the given amount
-  qrcode static                       Merchant's static QRIS image [v2]
-  qrcode channels                     List enabled payment channels [v2]
+  qrcode static                       Merchant's static QRIS image
+  qrcode channels                     List enabled payment channels
 
 ${ui.bold('Webhooks:')}
   webhook register <url>
   webhook test <url>
-  webhook history [--page N --pageSize N]
+  webhook history [--limit N --after CURSOR]
+  webhook new-history [--limit N --after CURSOR]
+  webhook retry <historyId>
 
 ${ui.bold('Global flags:')}
   --json                Output raw JSON instead of formatted tables
   --api-key <key>       Use this API key for the run (overrides env + saved config)
-  --page N              Pagination page (default 1)
-  --pageSize N          Pagination page size (default 10)
+  --limit N             Page size (v2, default 10, max 50)
+  --after CURSOR        Cursor for next page (from previous response's nextStartingAfter)
+  --pageSize N          Alias for --limit
+  --data <json|@file>   Inline JSON or @path to a JSON file
   -h, --help            Show help
   -v, --version         Show version
 
@@ -104,6 +158,8 @@ function parseFlags(argv) {
     else if (a.startsWith('--api-key=')) flags.apiKey = a.slice('--api-key='.length);
     else if (a === '--page') flags.page = argv[++i];
     else if (a === '--pageSize' || a === '--page-size') flags.pageSize = argv[++i];
+    else if (a === '--limit') flags.limit = argv[++i];
+    else if (a === '--after' || a === '--starting-after' || a === '--startingAfter') flags.after = argv[++i];
     else if (a === '--data') flags.data = argv[++i];
     else if (a === '-h' || a === '--help') flags.help = true;
     else if (a === '-v' || a === '--version') flags.version = true;
@@ -123,7 +179,6 @@ async function ensureKey(flags) {
   if (process.env.MAYAR_API_KEY) return process.env.MAYAR_API_KEY;
   const cfg = config.load();
   if (cfg && cfg.apiKey) return cfg.apiKey;
-  // First-run flow
   ui.printBanner();
   process.stdout.write(`${ui.bold('Welcome to Mayar CLI.')}\n`);
   process.stdout.write(`No API key found. Get yours from ${ui.cyan('https://web.mayar.id')} → Integration → API Key.\n\n`);
@@ -148,17 +203,10 @@ async function run(argv) {
 
   try {
     if (cmd === 'help') { process.stdout.write(HELP()); return; }
-    if (cmd === 'init') {
-      const init = require('./commands/init');
-      return await init.run({ flags });
-    }
-    if (cmd === 'login') {
-      const login = require('./commands/login');
-      return await login.run({ flags });
-    }
+    if (cmd === 'init') { return await require('./commands/init').run({ flags }); }
+    if (cmd === 'login') { return await require('./commands/login').run({ flags }); }
     if (cmd === 'api-key' || cmd === 'apikey') {
-      const apikey = require('./commands/apikey');
-      return await apikey.run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
+      return await require('./commands/apikey').run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
     }
     if (cmd === 'config') {
       if (sub === 'show') {
@@ -184,20 +232,36 @@ async function run(argv) {
       whoami:       './commands/whoami',
       balance:      './commands/balance',
       invoice:      './commands/invoice',
+      invoices:     './commands/invoice',
       product:      './commands/product',
+      products:     './commands/product',
       payment:      './commands/payment',
+      payments:     './commands/payment',
       customer:     './commands/customer',
+      customers:    './commands/customer',
       tx:           './commands/transaction',
       transaction:  './commands/transaction',
       transactions: './commands/transaction',
       qr:           './commands/qrcode',
       qrcode:       './commands/qrcode',
       webhook:      './commands/webhook',
+      webhooks:     './commands/webhook',
       review:       './commands/review',
       reviews:      './commands/review',
       discount:     './commands/discount',
       discounts:    './commands/discount',
       coupon:       './commands/discount',
+      coupons:      './commands/discount',
+      bundling:     './commands/bundling',
+      bundlings:    './commands/bundling',
+      installment:  './commands/installment',
+      installments: './commands/installment',
+      membership:   './commands/membership',
+      memberships:  './commands/membership',
+      credit:       './commands/credit',
+      credits:      './commands/credit',
+      saas:         './commands/saas',
+      software:     './commands/software',
     };
     const handler = handlers[cmd];
     if (!handler) {

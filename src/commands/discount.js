@@ -1,12 +1,24 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp } = require('../util');
+const { checkResp, readData } = require('../util');
 
-const USAGE = 'Usage: mayar discount <validate> <couponCode> <paymentLinkId>';
+const USAGE = 'Usage: mayar discount <create|get|validate|check>';
 
 async function run({ apiKey, flags, positional }) {
   const [sub, ...rest] = positional;
   switch (sub) {
+    case 'create': {
+      const body = readData(flags.data);
+      if (!body) throw new Error('mayar discount create requires --data <json|@file>');
+      const res = await api.request('POST', '/hl/v2/coupons/create', { apiKey, body });
+      checkResp(res); ui.jsonOut(res.body); return;
+    }
+    case 'get':
+    case 'detail': {
+      if (!rest[0]) throw new Error('Usage: mayar discount get <id>');
+      const res = await api.request('GET', `/hl/v2/coupons/${encodeURIComponent(rest[0])}`, { apiKey });
+      checkResp(res); ui.jsonOut(res.body); return;
+    }
     case 'validate': {
       if (!rest[0] || !rest[1]) throw new Error('Usage: mayar discount validate <couponCode> <paymentLinkId>');
       const res = await api.request('POST', '/hl/v2/coupons/validate', {
@@ -24,6 +36,13 @@ async function run({ apiKey, flags, positional }) {
       if (c.minimumPurchase != null) process.stdout.write(`${ui.bold('Min. purchase:')} ${c.minimumPurchase}\n`);
       if (c.eligibleCustomerType) process.stdout.write(`${ui.bold('Eligible:')}       ${c.eligibleCustomerType}\n`);
       return;
+    }
+    case 'check': {
+      if (!rest[0]) throw new Error('Usage: mayar discount check <couponCode>');
+      const res = await api.request('POST', '/hl/v2/coupons/check', {
+        apiKey, body: { couponCode: rest[0] },
+      });
+      checkResp(res); ui.jsonOut(res.body); return;
     }
     default:
       throw new Error(USAGE);

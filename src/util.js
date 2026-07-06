@@ -19,6 +19,33 @@ function readData(value) {
   return JSON.parse(value);
 }
 
+// Build a v2 cursor pagination query from flags.
+// v2 uses limit + startingAfter. --pageSize is accepted as an alias for --limit,
+// --after is the short form of --starting-after.
+function pagination(flags, extra) {
+  const q = { ...(extra || {}) };
+  const limit = flags.limit ?? flags.pageSize;
+  const after = flags.after ?? flags.startingAfter ?? flags['starting-after'];
+  if (limit !== undefined && limit !== '') q.limit = limit;
+  if (after !== undefined && after !== '') q.startingAfter = after;
+  return q;
+}
+
+// Print the cursor footer after a paginated list. Mayar v2 returns
+// nextStartingAfter + hasMore on the response envelope.
+function cursorFooter(body, count) {
+  const m = body || {};
+  const parts = [];
+  if (typeof m.pageSize === 'number' || typeof m.limit === 'number') {
+    parts.push(`limit ${m.pageSize ?? m.limit}`);
+  }
+  if (typeof count === 'number') parts.push(`showing ${count}`);
+  if (m.nextStartingAfter) parts.push(`next: --after ${m.nextStartingAfter}`);
+  if (m.hasMore === true) parts.push('hasMore');
+  if (!parts.length) return;
+  process.stdout.write(ui.dim(parts.join(' · ')) + '\n');
+}
+
 function maybeJson(flags, body, fallback) {
   if (flags.json) {
     ui.jsonOut(body);
@@ -31,4 +58,4 @@ function maybeJson(flags, body, fallback) {
   return false;
 }
 
-module.exports = { checkResp, readData, maybeJson };
+module.exports = { checkResp, readData, maybeJson, pagination, cursorFooter };

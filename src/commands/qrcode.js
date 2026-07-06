@@ -5,9 +5,8 @@ const { checkResp } = require('../util');
 const USAGE = 'Usage: mayar qrcode <amount> | mayar qrcode static | mayar qrcode channels';
 
 async function run({ apiKey, flags, positional }) {
-  const [first, ...rest] = positional;
+  const [first] = positional;
 
-  // v2: static QRIS
   if (first === 'static') {
     const res = await api.request('GET', '/hl/v2/qr-codes/static', { apiKey });
     checkResp(res);
@@ -18,7 +17,6 @@ async function run({ apiKey, flags, positional }) {
     return;
   }
 
-  // v2: payment channels
   if (first === 'channels') {
     const res = await api.request('GET', '/hl/v2/payment-channels', { apiKey });
     checkResp(res);
@@ -36,13 +34,10 @@ async function run({ apiKey, flags, positional }) {
     return;
   }
 
-  // v1: dynamic QR for amount (existing behavior)
   if (!first) throw new Error(USAGE);
   const amount = Number(first);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new Error(USAGE);
-  }
-  const res = await api.request('POST', '/hl/v1/qrcode/create', { apiKey, body: { amount } });
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error(USAGE);
+  const res = await api.request('POST', '/hl/v2/qr-codes/create', { apiKey, body: { amount } });
   checkResp(res);
   if (flags.json) return ui.jsonOut(res.body);
   const d = (res.body && res.body.data) || {};

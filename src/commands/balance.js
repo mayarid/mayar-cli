@@ -3,7 +3,7 @@ const ui = require('../ui');
 const { checkResp } = require('../util');
 
 async function run({ apiKey, flags }) {
-  const res = await api.request('GET', '/hl/v1/balance', { apiKey });
+  const res = await api.request('GET', '/hl/v2/balances', { apiKey });
   checkResp(res);
   if (flags.json) return ui.jsonOut(res.body);
   const d = (res.body && res.body.data) || {};

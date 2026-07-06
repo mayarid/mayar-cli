@@ -70,84 +70,138 @@ mayar --api-key YOUR_KEY_HERE balance
 
 Get your API key from [web.mayar.id](https://web.mayar.id) → Integration → API Key.
 
+> **v1.0.0 — Mayar API v2.** All commands now target `/hl/v2/...`. Pagination switched from `--page`/`--pageSize` to cursor-based `--limit`/`--after` (returned in the previous response's `nextStartingAfter`). The `--pageSize` flag is still accepted as an alias for `--limit`.
+
 ## Commands
 
 ```
 Setup
-  init                                  Run first-time setup (interactive, masked input)
-  api-key <key>                         Save API key non-interactively (e.g. for scripts)
-  config show                           Show masked saved key and config path
-  config reset                          Remove the saved key
+  init                                  First-time setup (interactive, masked input)
+  login [--no-browser]                  Sign in via Google OAuth
+  api-key <key>                         Save API key non-interactively
+  config show|reset                     Inspect or remove the saved config
 
 Account
-  whoami                                Show merchant identity (decoded from JWT) + verify key
-  balance                               GET /hl/v1/balance
+  whoami                                Merchant identity (JWT decode + live verify)
+  balance                               GET  /hl/v2/balances
 
 Invoices
-  invoice list [--page N --pageSize N]  GET /hl/v1/invoice
-  invoice get <id>                      GET /hl/v1/invoice/{id}
-  invoice close <id>                    GET /hl/v1/invoice/close/{id}
-  invoice reopen <id>                   GET /hl/v1/invoice/open/{id}
-  invoice create --data <json|@file>    POST /hl/v1/invoice/create
+  invoice list [--limit --after --status --search]
+  invoice get <id>
+  invoice close <id> | reopen <id>      POST /hl/v2/invoices/{id}/{open|close}
+  invoice status <id> <action>          action ∈ open|close|active|closed|unlisted
+  invoice edit <id> --data <json|@file>
+  invoice filter --email <email> [--limit --after --status --search]
+  invoice create --data <json|@file>
 
 Products
-  product list [--page N --pageSize N]  GET /hl/v1/product
-  product search <keyword>              GET /hl/v1/product?search=...
-  product type <type> [--page ...]      GET /hl/v1/product/type/{type}
-  product get <id>                      GET /hl/v1/product/{id}
-  product close <id>                    GET /hl/v1/product/close/{id}
-  product reopen <id>                   GET /hl/v1/product/open/{id}
-  product status <id> <action>          POST /hl/v2/products/{id}/{action}  [v2]
-                                        actions: open|close|active|closed|unlisted
+  product list [--limit --after --search --type --stock]
+  product search <keyword>
+  product type <ebook|course|membership|saas|event|webinar|…>
+  product get <id>
+  product close | reopen | status <id> <action>
+  product transactions <id> [--limit --after --status --customerId]
+  product create --type <T> --data <json|@file>
+                                        T ∈ ebook|digital|event|webinar|generic|payment-link
+  product edit <id>   --type <T> --data <json|@file>
 
 Single payment requests
-  payment list                          GET /hl/v1/payment
-  payment get <id>                      GET /hl/v1/payment/{id}
-  payment close <id>                    GET /hl/v1/payment/close/{id}
-  payment reopen <id>                   GET /hl/v1/payment/open/{id}
-  payment create --data <json|@file>    POST /hl/v1/payment/create
+  payment list [--limit --after --status]
+  payment get <id>
+  payment close | reopen | status <id> <action>
+  payment edit <id> --data <json|@file>
+  payment create --data <json|@file>
 
 Customers
-  customer list [--page ...]            GET /hl/v1/customer
-  customer create --data <json|@file>   POST /hl/v1/customer/create
-  customer search <email>               GET /hl/v1/customer/detail?email=
-  customer update <from> <to>           POST /hl/v1/customer/update
-  customer magic-link <email>           POST /hl/v1/customer/login/portal
+  customer list                          GET  /hl/v2/customers
+  customer create --data <json|@file>
+  customer search <email>                GET  /hl/v2/customers/detail?email=
+  customer update <fromEmail> <toEmail>
+  customer magic-link <email>            POST /hl/v2/customers/portal-login
 
 Transactions
-  tx list   [--page ...]                GET /hl/v1/transactions          (paid)
-  tx unpaid [--page ...]                GET /hl/v1/transactions/unpaid
-  tx daily                              GET /hl/v1/transactions/daily
+  tx list   [--limit --after --status --customerId --type --startAt --endAt]
+  tx unpaid [--limit --after --status --customerId --startAt --endAt]
+  tx daily
+  tx product <productId> [--limit --after --status]
 
 Reviews
-  review list [--page ...]              GET /hl/v1/reviews
-  review stats [productId]              GET /hl/v2/merchants/reviews/stats     [v2]
-                                        or /hl/v2/products/{id}/reviews/stats
+  review list [--limit --after --status --paymentLinkId --rating]
+  review stats [productId]               merchant-wide or per-product
+  review create --data <json|@file>
+  review update <id> --data <json|@file>
+  review bulk-status --data <json>       [{id,status: ACTIVE|ARCHIVED|INACTIVE}, …]
+  review product <paymentLinkId> [--limit --after --rating]
+  review product-customer <paymentLinkId> --customerId <id>
 
 Discounts (coupons)
-  discount validate <code> <plId>       POST /hl/v2/coupons/validate           [v2]
+  discount create --data <json|@file>
+  discount get <id>
+  discount validate <code> <paymentLinkId>
+  discount check <code>
+
+Bundling
+  bundling list [--limit --after]
+  bundling get <id>
+
+Installments
+  installment list [--limit --after --status --customerId]
+  installment get <id>
+  installment create --data <json|@file>
+
+Memberships
+  membership members --productId <id> [--limit --after]
+  membership tiers   --productId <id> [--limit --after]
+  membership register --data <json|@file>
+  membership get <memberId>            --productId <id>
+  membership update <memberId>         --productId <id> [--data <json|@file>]
+  membership cancel <memberId>         --productId <id>
+  membership create-invoice <memberId> --productId <id>
+
+Credit wallets
+  credit balance  --customerId <id> --productId <id> [--tierId <id>]
+  credit add      --data <json|@file>    {customerId, productId, amount}
+  credit spend    --data <json|@file>    {customerId, productId, amount}
+  credit history  <customerId> --productId <id> [--page N --limit N]
+  credit register-usage      --data <json|@file>
+  credit register-membership --data <json|@file>
+  credit checkout            --data <json|@file>
+
+SaaS licensing
+  saas activate   <licenseCode> <productId>   POST /saas/v2/license/activate
+  saas deactivate <licenseCode> <productId>   POST /saas/v2/license/deactivate
+  saas verify     <licenseCode> <productId>   POST /saas/v2/license/verify
+
+Software licensing
+  software verify <licenseCode> <productId>   POST /software/v2/license/verify
 
 QR & payment channels
-  qrcode <amount>                       POST /hl/v1/qrcode/create
-  qrcode static                         GET /hl/v2/qr-codes/static             [v2]
-  qrcode channels                       GET /hl/v2/payment-channels            [v2]
+  qrcode <amount>                        POST /hl/v2/qr-codes/create
+  qrcode static                          GET  /hl/v2/qr-codes/static
+  qrcode channels                        GET  /hl/v2/payment-channels
 
 Webhooks
-  webhook register <url>                GET /hl/v1/webhook/register
-  webhook test <url>                    POST /hl/v1/webhook/test
-  webhook history [--page ...]          GET /hl/v1/webhook/history
+  webhook register <url>                 POST /hl/v2/webhooks/update
+  webhook test <url>
+  webhook history     [--limit --after --status --type --startAt --endAt]
+  webhook new-history [--limit --after]
+  webhook retry <historyId>
 
 Global flags
   --json                Output raw JSON instead of pretty tables
   --api-key <key>       Use this API key for the run (also accepts --api-key=KEY)
-  --page N              Pagination page (default 1)
-  --pageSize N          Pagination page size (default 10)
+  --limit N             Page size (default 10, max 50)
+  --after CURSOR        Pagination cursor (from previous nextStartingAfter)
+  --pageSize N          Alias for --limit
+  --data <json|@file>   Inline JSON, or @path to a JSON file
   -h, --help            Show help
   -v, --version         Show version
 
 Environment
-  MAYAR_API_KEY         API key — used when --api-key flag is absent and no config is saved
-  MAYAR_API_URL         Override API base URL (default: https://api.mayar.id)
+  MAYAR_API_KEY         Used when --api-key is absent and no config is saved
+  MAYAR_API_URL         Override API base URL
+  MAYAR_AUTH_URL        Override auth server base URL (used by 'login')
+  NODE_ENV=development  Target the sandbox (*.mayar.club) instead of production
 ```
 
 ## Examples
@@ -159,9 +213,10 @@ mayar whoami
 # Account balance
 mayar balance
 
-# Paginated lists
-mayar invoice list --page 1 --pageSize 20
-mayar product type ebook --pageSize 50
+# Paginated lists (v2 cursor pagination)
+mayar invoice list --limit 20
+mayar invoice list --limit 20 --after 1730000000000     # next page
+mayar product type ebook --limit 50
 
 # Search
 mayar product search "kelas python"
@@ -192,7 +247,13 @@ mayar qrcode 10000
 # Webhooks
 mayar webhook register https://example.com/hooks/mayar
 mayar webhook test     https://example.com/hooks/mayar
-mayar webhook history --page 1 --pageSize 20
+mayar webhook history --limit 20
+
+# Membership members
+mayar membership members --productId prd-42 --limit 20
+
+# SaaS license verify
+mayar saas verify LIC-123 prd-42
 
 # Pipe raw JSON to jq
 mayar invoice list --json | jq '.data[] | {id, status}'
@@ -214,4 +275,5 @@ To rotate keys: `mayar config reset && mayar init`.
 - All requests use `Authorization: Bearer <key>`. Errors print `API <status> — <message>` and exit non-zero.
 - `--data @file.json` reads from disk; `--data '{...}'` reads inline JSON.
 - `MAYAR_API_URL` overrides the base URL — useful for staging or custom proxy environments.
-- `mayar whoami` decodes the JWT locally and verifies the key live against `/hl/v1/balance`.
+- `mayar whoami` decodes the JWT locally and verifies the key live against `/hl/v2/balances`.
+- **v1.0.0 migration**: all API paths moved from `/hl/v1/*` to `/hl/v2/*`. `--page` is no longer used (v2 has no page numbers); the cursor is returned as `nextStartingAfter` in each response and passed as `--after` for the next page.

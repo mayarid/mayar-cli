@@ -1,11 +1,12 @@
 ---
 name: mayar
 display_name: Mayar CLI
-version: "0.1.9"
+version: "1.0.0"
 description: >
   Interact with the Mayar payment platform (invoices, products, payments,
-  customers, transactions, webhooks, QR codes) from any AI agent or shell.
-  Zero dependencies — Node.js 18+ only.
+  customers, transactions, webhooks, QR codes, memberships, credit wallets,
+  discounts, installments, bundling, SaaS/software licensing) from any AI
+  agent or shell. Targets Mayar API v2. Node.js 18+.
 author: Mayar bot
 license: MIT
 homepage: https://github.com/mayarid/mayar-cli
@@ -38,14 +39,25 @@ auth:
 capabilities:
   - invoices
   - products
+  - product-creation
   - payments
   - customers
   - transactions
   - reviews
+  - reviews-crud
   - webhooks
   - qrcode
+  - static-qris
+  - payment-channels
   - balance
   - whoami
+  - bundling
+  - installments
+  - membership
+  - credit-wallets
+  - discounts
+  - saas-licensing
+  - software-licensing
 ---
 
 # Mayar CLI — Agent Skill
