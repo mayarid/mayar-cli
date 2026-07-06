@@ -97,6 +97,8 @@ Products
   product get <id>                      GET /hl/v1/product/{id}
   product close <id>                    GET /hl/v1/product/close/{id}
   product reopen <id>                   GET /hl/v1/product/open/{id}
+  product status <id> <action>          POST /hl/v2/products/{id}/{action}  [v2]
+                                        actions: open|close|active|closed|unlisted
 
 Single payment requests
   payment list                          GET /hl/v1/payment
@@ -119,9 +121,16 @@ Transactions
 
 Reviews
   review list [--page ...]              GET /hl/v1/reviews
+  review stats [productId]              GET /hl/v2/merchants/reviews/stats     [v2]
+                                        or /hl/v2/products/{id}/reviews/stats
 
-Dynamic QR
+Discounts (coupons)
+  discount validate <code> <plId>       POST /hl/v2/coupons/validate           [v2]
+
+QR & payment channels
   qrcode <amount>                       POST /hl/v1/qrcode/create
+  qrcode static                         GET /hl/v2/qr-codes/static             [v2]
+  qrcode channels                       GET /hl/v2/payment-channels            [v2]
 
 Webhooks
   webhook register <url>                GET /hl/v1/webhook/register

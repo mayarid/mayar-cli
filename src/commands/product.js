@@ -2,7 +2,8 @@ const api = require('../api');
 const ui = require('../ui');
 const { checkResp } = require('../util');
 
-const USAGE = 'Usage: mayar product <list|get|close|reopen|search|type>';
+const USAGE = 'Usage: mayar product <list|get|close|reopen|status|search|type>';
+const STATUS_ACTIONS = ['open', 'close', 'active', 'closed', 'unlisted'];
 
 function renderList(body) {
   const data = (body && body.data) || [];
@@ -63,6 +64,19 @@ async function run({ apiKey, flags, positional }) {
     case 'reopen': {
       if (!rest[0]) throw new Error('Usage: mayar product reopen <id>');
       const res = await api.request('GET', `/hl/v1/product/open/${encodeURIComponent(rest[0])}`, { apiKey });
+      checkResp(res); ui.jsonOut(res.body); return;
+    }
+    case 'status': {
+      if (!rest[0] || !rest[1]) throw new Error(`Usage: mayar product status <id> <${STATUS_ACTIONS.join('|')}>`);
+      const action = rest[1];
+      if (!STATUS_ACTIONS.includes(action)) {
+        throw new Error(`Invalid action "${action}". Must be one of: ${STATUS_ACTIONS.join(', ')}`);
+      }
+      const res = await api.request(
+        'POST',
+        `/hl/v2/products/${encodeURIComponent(rest[0])}/${action}`,
+        { apiKey },
+      );
       checkResp(res); ui.jsonOut(res.body); return;
     }
     default:

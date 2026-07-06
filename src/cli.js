@@ -33,6 +33,7 @@ ${ui.bold('Products:')}
   product get <id>
   product close <id>
   product reopen <id>
+  product status <id> <open|close|active|closed|unlisted>   [v2, adds unlisted]
 
 ${ui.bold('Single payment requests:')}
   payment list
@@ -55,9 +56,15 @@ ${ui.bold('Transactions:')}
 
 ${ui.bold('Reviews:')}
   review list [--page N --pageSize N]
+  review stats [productId]            Aggregated ratings (merchant-wide or per product) [v2]
 
-${ui.bold('Dynamic QR:')}
-  qrcode <amount>
+${ui.bold('Discounts:')}
+  discount validate <code> <paymentLinkId>   Check if a coupon applies to a checkout [v2]
+
+${ui.bold('QR & Payment Channels:')}
+  qrcode <amount>                     Dynamic QR for the given amount
+  qrcode static                       Merchant's static QRIS image [v2]
+  qrcode channels                     List enabled payment channels [v2]
 
 ${ui.bold('Webhooks:')}
   webhook register <url>
@@ -188,6 +195,9 @@ async function run(argv) {
       webhook:      './commands/webhook',
       review:       './commands/review',
       reviews:      './commands/review',
+      discount:     './commands/discount',
+      discounts:    './commands/discount',
+      coupon:       './commands/discount',
     };
     const handler = handlers[cmd];
     if (!handler) {
