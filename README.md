@@ -104,6 +104,13 @@ Products
   product create --type <T> --data <json|@file>
                                         T ∈ ebook|digital|event|webinar|generic|payment-link
   product edit <id>   --type <T> --data <json|@file>
+  product sort <generic_link|event|webinar|digital_product> [--limit --after]
+                                        POST /hl/v2/payment-links/sort/{type}
+
+Payment links (alt route)
+  payment-link edit <id> --data <json|@file>
+                                        POST /hl/v2/payment-links/{id}/update
+                                        (alias for `product edit --type payment-link`)
 
 Single payment requests
   payment list [--limit --after --status]
