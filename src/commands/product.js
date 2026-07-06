@@ -2,7 +2,8 @@ const api = require('../api');
 const ui = require('../ui');
 const { checkResp, readData, pagination, cursorFooter } = require('../util');
 
-const USAGE = 'Usage: mayar product <list|search|type|get|close|reopen|status|transactions|create|edit>';
+const USAGE = 'Usage: mayar product <list|search|type|get|close|reopen|status|transactions|create|edit|sort>';
+const SORT_TYPES = ['generic_link', 'event', 'webinar', 'digital_product'];
 const STATUS_ACTIONS = ['open', 'close', 'active', 'closed', 'unlisted'];
 
 // Map user-friendly --type values to their v2 endpoint paths.
@@ -110,6 +111,26 @@ async function run({ apiKey, flags, positional }) {
       if (!body) throw new Error('mayar product create requires --data <json|@file>');
       const res = await api.request('POST', path, { apiKey, body });
       checkResp(res); ui.jsonOut(res.body); return;
+    }
+    case 'sort': {
+      if (!rest[0]) throw new Error(`Usage: mayar product sort <${SORT_TYPES.join('|')}>`);
+      if (!SORT_TYPES.includes(rest[0])) {
+        throw new Error(`Invalid type "${rest[0]}". Must be one of: ${SORT_TYPES.join(', ')}`);
+      }
+      // Sort endpoint uses snake_case `starting_after` (unlike every other v2 list endpoint
+      // which uses camelCase `startingAfter`). Build the query directly rather than via
+      // pagination() to preserve the exact wire name.
+      const query = {};
+      const limit = flags.limit ?? flags.pageSize;
+      const after = flags.after ?? flags.startingAfter ?? flags['starting-after'];
+      if (limit) query.limit = limit;
+      if (after) query.starting_after = after;
+      const res = await api.request('POST', `/hl/v2/payment-links/sort/${encodeURIComponent(rest[0])}`, {
+        apiKey, query,
+      });
+      checkResp(res);
+      if (flags.json) return ui.jsonOut(res.body);
+      renderList(res.body); return;
     }
     case 'edit': {
       if (!rest[0]) throw new Error('Usage: mayar product edit <id> --type <T> --data <json|@file>');

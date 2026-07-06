@@ -40,6 +40,10 @@ ${ui.bold('Products:')}
   product transactions <id> [--limit N --after CURSOR]
   product create --type <T> --data <json|@file>
   product edit <id> --data <json|@file>
+  product sort <generic_link|event|webinar|digital_product> [--limit --after]
+
+${ui.bold('Payment links (alt route):')}
+  payment-link edit <id> --data <json|@file>   Alias for /hl/v2/payment-links/{id}/update
 
 ${ui.bold('Single payment requests:')}
   payment list [--limit N --after CURSOR --status paid|unpaid|closed]
@@ -262,6 +266,10 @@ async function run(argv) {
       credits:      './commands/credit',
       saas:         './commands/saas',
       software:     './commands/software',
+      'payment-link':  './commands/payment-link',
+      paymentlink:     './commands/payment-link',
+      'payment-links': './commands/payment-link',
+      plink:           './commands/payment-link',
     };
     const handler = handlers[cmd];
     if (!handler) {
