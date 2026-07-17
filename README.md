@@ -35,7 +35,15 @@ npm link        # exposes a `mayar` command on your PATH
 
 ## Authentication
 
-Resolution order: `--api-key` flag → `MAYAR_API_KEY` env → saved config file.
+**Preferred — browser login:**
+
+```bash
+mayar login
+```
+
+Opens your browser for Google OAuth sign-in and saves the auth token automatically — no copy-pasting keys. Use `mayar login --no-browser` on headless machines to get a URL to open elsewhere.
+
+Alternatives (resolution order: `--api-key` flag → `MAYAR_API_KEY` env → saved config file):
 
 **Option 1 — environment variable (recommended for CI/agents):**
 
