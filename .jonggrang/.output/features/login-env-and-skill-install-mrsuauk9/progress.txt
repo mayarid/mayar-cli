@@ -1,0 +1,160 @@
+## Session 2026-07-20 — task-001: Config refactor
+
+### Completed
+- Added `_runtimeEndpoint` module-level variable, `setRuntimeEndpoint()` with strict validation (sandbox/production/null, throws on invalid)
+- Added `resolveEndpoint()` with priority chain: runtime override > NODE_ENV > stored config > 'production' default
+- Refactored `apiBaseUrl()` and `authBaseUrl()` to use `resolveEndpoint()` instead of old `isDev()`
+- Updated `isDev()` to delegate to `resolveEndpoint() === 'sandbox'` for backward compatibility
+- Exported `setRuntimeEndpoint` and `resolveEndpoint` alongside existing exports
+- All 70 existing tests pass, including config.test.js save/load/clear round-trip tests
+- Smoke-tested all acceptance criteria manually
+
+### Key Decisions
+- `resolveEndpoint()` calls `load()` each time to read stored config — simple and correct, no caching layer needed at this stage
+- Env vars (`MAYAR_API_URL`/`MAYAR_AUTH_URL`) remain absolute precedence in their respective URL functions
+
+### What Next
+- `api.js` still snapshots `BASE_URL` at module load time — will need dynamic resolution per plan Phase 1
+- Login and init commands need `--sandbox`/`--production`/`--env` flag handling to call `setRuntimeEndpoint()`
+
+---
+
+## Session 2026-07-20 — task-002: Dynamic base URL + flag parsing
+
+### Completed
+- Removed module-level `const BASE_URL` from `api.js`; `request()` now calls `config.apiBaseUrl()` on every invocation, resolving the environment dynamically
+- Removed `BASE_URL` from module exports (was only used internally and in tests)
+- Added `--sandbox` and `--production` boolean flags to `parseFlags()`
+- Added `--env <value>` explicit flag handler to `parseFlags()` (generic `--key=value` handler already catches `--env=value` inline form)
+- Added endpoint resolution block in `run()`: validates mutual exclusivity of sandbox/production, validates --env values, calls `config.setRuntimeEndpoint()` with the resolved value or null
+- Changed `ensureKey()` auto-prompt to use `config.resolveEndpoint()` instead of hardcoded `'production'` so it respects flag/saved endpoint
+- Updated HELP text: added `--sandbox`, `--production`, `--env` to Global flags; revised Environment section with new resolution order
+- All 69 existing tests pass (cli, config, ui, util) — no regressions
+
+### Key Decisions
+- `--env=sandbox` (inline form) is handled by the existing generic `--key=value` handler, no explicit code needed
+- `--env` without `=` is handled explicitly to ensure the next arg is consumed as the value
+- Endpoint resolution happens *before* other run logic (version, help, command dispatch) so the endpoint is set for all commands
+- Case-insensitive validation for `--env` values (`.toLowerCase()`) for user-friendliness
+
+---
+
+## Session 2026-07-20 — task-003: Interactive environment selection for mayar login
+
+### Completed
+- Added interactive TTY prompt in `src/commands/login.js` after `ui.printBanner()`:
+  - Only triggers when: not `--json`, no `--sandbox`/`--production`/`--env` flags, `stdin.isTTY`, no stored `endpoint` in config, and `resolveEndpoint()` returns 'production' (i.e., NODE_ENV isn't 'development')
+  - Shows "Select environment" with [1] Production / [2] Sandbox options
+  - Uses `ui.ask('Choose [1]: ')` with default to '1' (production) on empty input
+  - Maps '2'/'sandbox' → sandbox, everything else → production
+  - Calls `config.setRuntimeEndpoint()` with the chosen value
+- Moved `authUrl` computation to after the prompt so `MayarAuth` SDK gets the correct URL
+- Added endpoint display line: `Endpoint: production|sandbox` after the auth server line
+- Added `endpoint: config.resolveEndpoint()` to the top-level of saved config alongside `auth`
+- Added `endpoint` field to JSON output (`ui.jsonOut()`)
+- All 70 existing tests pass — no regressions
+
+### Key Decisions
+- Prompt only when truly no preference exists: checks flags, TTY, stored endpoint, and NODE_ENV before prompting. A stored `endpoint` (even 'production') suppresses the prompt.
+- `setRuntimeEndpoint()` is called inside login.js (even though cli.js already calls it) because the user's selection needs to override the null set by cli.js. The priority chain in config handles this correctly.
+- Empty/invalid input defaults to production — safest default for new users.
+
+### What Next
+- task-004: Mirror environment selection into `mayar init`
+- task-005+: `mayar skill install` command
+
+---
+
+## Session 2026-07-20 — task-004: Add interactive environment selection to mayar init
+
+### Completed
+- Added interactive TTY prompt in `src/commands/init.js` after API key check/overwrite logic:
+  - Only triggers when: no `--sandbox`/`--production`/`--env` flags AND `stdin.isTTY`
+  - Shows "Select environment" with [1] Production / [2] Sandbox options
+  - Uses `ui.ask('Choose [1]: ')` with default to '1' (production) on empty input
+  - Maps '2'/'sandbox' → sandbox, everything else → production
+  - Calls `config.setRuntimeEndpoint()` with the chosen value
+- Welcome message URL is now dynamic: `https://web.mayar.club` for sandbox, `https://web.mayar.id` for production
+- `config.save()` now uses `config.resolveEndpoint()` instead of hardcoded `'production'`
+- Added endpoint display line: `${ui.dim('Endpoint:')} ${endpoint}` after the "Saved" line
+- All 70 existing tests pass — no regressions
+
+### Key Decisions
+- Unlike login.js, init.js does NOT check for stored endpoint or NODE_ENV before prompting — the task spec only requires checking flags and isTTY. This is appropriate because init is a setup command that should always offer the choice when interactive.
+- The prompt placement (after overwrite check, before welcome message) ensures the welcome message URL is correct.
+- `config.setRuntimeEndpoint()` is called inside init.js (even though cli.js already calls it) because the user's selection overrides the null set by cli.js.
+
+### What Next
+- task-005+: `mayar skill install` command
+
+---
+
+## Session 2026-07-20 — task-005: Create src/commands/skill.js
+
+### Completed
+- Created `src/commands/skill.js` with `run(ctx)` export matching project convention
+- Parses subcommand from positional[0]; 'install' triggers action, no subcommand/'help' shows usage, unknown errors with exit(1)
+- Fetches SKILL.md from `https://raw.githubusercontent.com/mayarid/mayar-cli/refs/heads/main/SKILL.md` via `https.get`
+- Follows 301/302 redirects up to 3 hops with proper `res.resume()` on redirected responses
+- Defines 5 target paths: `.agents/skills/mayar/SKILL.md`, `.claude/skills/mayar/SKILL.md`, `.opencode/skills/mayar/SKILL.md`, `.codex/skills/mayar/SKILL.md`, `.cursor/rules/mayar.mdc`
+- `--target` flag (default 'all') filters to specific agent; validates against: all, agents, claude, opencode, codex, cursor
+- Creates parent dirs with `fs.mkdirSync({recursive:true})`
+- Skips existing files unless `--force` is set; prints skip message mentioning `--force`
+- `--json` outputs JSON array of `{target, path, status}` with status 'installed' or 'skipped'
+- Uses only Node.js built-ins: `https`, `fs`, `path` + project-internal `ui` module for formatting
+- All 70 existing tests continue to pass (no regressions)
+
+### Key Decisions
+- Cursor target (`.cursor/rules/mayar.mdc`) is included in the install loop with raw SKILL.md content; task-006 will add `.mdc` frontmatter adaptation
+- Redirect-following uses internal `doFetch` closure to avoid recursion pollution; `new URL(res.headers.location, url)` handles relative redirects
+- `--target` flag is parsed by cli.js's generic `--key=value` handler (no explicit handler needed in parseFlags)
+- Error messages go to stderr with `ui.red()` for consistency; usage/install messages go to stdout
+
+### What Next
+- task-006: CLI registration in cli.js (add `skill` to handlers map), HELP text update, Cursor `.mdc` adaptation with YAML frontmatter
+
+---
+
+## Session 2026-07-20 — task-006: Cursor .mdc adaptation
+
+### Completed
+- Added `generateCursorMdc(skillContent)` function in `src/commands/skill.js`:
+  - Strips original SKILL.md YAML frontmatter by finding `---` on line 0 and closing `---` on a subsequent line, then slicing the body from after that
+  - If no frontmatter detected (line 0 isn't `---`), preserves raw content as-is
+  - Prepends Cursor .mdc frontmatter with `alwaysApply: true`, `description`, `globs: ["**/*"]`
+- Modified install loop to branch on `t === 'cursor'`:
+  - Uses `generateCursorMdc(content)` for file content instead of raw SKILL.md
+  - Prints "Installed (Cursor .mdc): .cursor/rules/mayar.mdc" label for cursor target
+  - All other targets continue using raw SKILL.md content
+- Force/skip logic unchanged — works identically for all targets including cursor
+- Verified output: exactly 2 `^---$` YAML delimiters (no nesting), Cursor frontmatter keys present, original SKILL.md frontmatter keys absent, body content intact
+- All 70 existing tests pass — no regressions
+
+### Key Decisions
+- `generateCursorMdc` is a module-private function (not exported) — only used internally by the install loop
+- YAML frontmatter stripping uses `lines[i].trim() === '---'` to match delimiter lines — `trim()` handles potential trailing whitespace/carriage returns
+- Frontmatter is always trimmed from body, then body is re-trimmed at the end — ensures clean output without leading/trailing whitespace
+- The `--target agents` case naturally excludes cursor since the targets array is `['agents']` only
+
+### What Next
+- task-007: Register `skill` command in cli.js handlers map + update HELP text
+
+---
+
+## Session 2026-07-20 — task-007: Register skill command in cli.js + update HELP
+
+### Completed
+- Added `skill: './commands/skill'` to the handlers map in `src/cli.js`
+- Added "Agent Skills" section to HELP text showing `skill install` usage with `--target` and `--force` flags
+- Verified Global flags section already includes `--sandbox`, `--production`, `--env` (added in task-002)
+- Verified Environment section already shows correct resolution order (added in task-002)
+- All 70 existing tests pass — no regressions
+- Smoke-verified all acceptance criteria: `mayar skill install` runs, `mayar -h` shows new section, unknown `skillx` errors, skill routing works
+
+### Key Decisions
+- Agent Skills section placed right after Setup, before Account — matches the logical grouping of setup-time commands
+- No change to `--env` HELP text format (uses `<value>` not `<sandbox|production>`, already functionally clear)
+- Did not modify `ensureKey()` behavior — skill command now requires API key authentication via the same guard as all other commands in the handlers map
+
+### What Next
+- Feature complete — all 7 tasks done

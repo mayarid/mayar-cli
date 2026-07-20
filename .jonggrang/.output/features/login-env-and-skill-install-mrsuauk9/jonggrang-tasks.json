@@ -5,16 +5,16 @@
       "title": "Refactor config.js: resolveEndpoint(), setRuntimeEndpoint(), endpoint-aware apiBaseUrl/authBaseUrl",
       "description": "Refactor src/config.js to support a runtime endpoint override and a unified resolution chain.\n\nImplementation:\n1. Add module-level variable `let _runtimeEndpoint = null;`\n2. Add `setRuntimeEndpoint(ep)` function that validates 'sandbox'/'production'/null, sets _runtimeEndpoint (throw on invalid input)\n3. Add `resolveEndpoint()` implementing the priority chain:\n   - Return _runtimeEndpoint if non-null\n   - Else if NODE_ENV==='development' → 'sandbox'\n   - Else load config and return cfg?.endpoint || 'production'\n4. Refactor `apiBaseUrl()`: if MAYAR_API_URL env → return it; else resolveEndpoint()==='sandbox' → 'https://api.mayar.club' else 'https://api.mayar.id'\n5. Refactor `authBaseUrl()`: if MAYAR_AUTH_URL env → return it; else resolveEndpoint()==='sandbox' → 'https://auth.mayar.club' else 'https://auth.mayar.id'\n6. Update `isDev()` to return resolveEndpoint() === 'sandbox' (backward compat)\n7. Export `setRuntimeEndpoint` and `resolveEndpoint` alongside existing exports\n\nAcceptance:\n- setRuntimeEndpoint('sandbox') then apiBaseUrl() returns sandbox URL\n- setRuntimeEndpoint(null) restores fallback to NODE_ENV / stored config\n- Env vars MAYAR_API_URL/MAYAR_AUTH_URL always take precedence\n- With no config and no env, defaults to production URLs\n- Existing config.test.js tests pass (no breaking changes to save/load/clear)",
       "priority": 1,
-      "status": "pending",
+      "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [],
-      "passes": false,
+      "passes": true,
       "files": [
         "src/config.js"
       ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T09:10:23.143Z",
+      "completed_at": "2026-07-20T09:10:57.064Z",
       "error_log": []
     },
     {
@@ -22,19 +22,19 @@
       "title": "Fix api.js dynamic base URL + add --sandbox/--production/--env flag parsing in cli.js",
       "description": "Make api.js resolve the base URL dynamically on each request. Add new environment flags (--sandbox, --production, --env) to parseFlags and wire them into config.setRuntimeEndpoint() in run(). Fix the hardcoded endpoint in ensureKey().\n\nImplementation — src/api.js:\n1. Remove module-level `const BASE_URL = config.apiBaseUrl();`\n2. Inside `request()`, replace `BASE_URL` with `config.apiBaseUrl()` so the URL is resolved fresh on every call\n\nImplementation — src/cli.js parseFlags:\n1. Add `--sandbox` → flags.sandbox = true\n2. Add `--production` → flags.production = true\n3. Add `--env <value>` → flags.env = value (the existing unknown-long-flag handler already supports --key=value form)\n\nImplementation — src/cli.js run():\n1. After parseFlags(), resolve endpoint override:\n   - If both sandbox and production are truthy → error + exit(1)\n   - If sandbox → setRuntimeEndpoint('sandbox')\n   - Else if production → setRuntimeEndpoint('production')\n   - Else if flags.env → validate 'sandbox'/'production' (error+exit otherwise), then setRuntimeEndpoint\n   - Else → setRuntimeEndpoint(null)\n2. In ensureKey(), replace hardcoded `endpoint: 'production'` with `endpoint: config.resolveEndpoint()` so the auto-prompt respects --sandbox\n3. Update HELP global flags section: add --sandbox, --production, --env <sandbox|production>\n4. Update HELP environment section: new resolution order text\n\nAcceptance:\n- `mayar --sandbox whoami` uses api.mayar.club\n- `mayar --production whoami` uses api.mayar.id\n- Both --sandbox and --production together errors with clear message\n- Invalid --env value errors\n- `--help` shows new flags and resolution order\n- Existing parseFlags tests continue to pass\n- ensureKey auto-prompt uses resolved endpoint, not hardcoded 'production'",
       "priority": 1,
-      "status": "pending",
+      "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-001"
       ],
-      "passes": false,
+      "passes": true,
       "files": [
         "src/api.js",
         "src/cli.js"
       ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T09:11:42.021Z",
+      "completed_at": "2026-07-20T09:13:28.672Z",
       "error_log": []
     },
     {
@@ -42,19 +42,19 @@
       "title": "Add interactive environment selection to mayar login",
       "description": "Add an interactive TTY prompt to `mayar login` so users can choose between sandbox and production when no --sandbox/--production/--env flag is passed. Save the chosen endpoint to config.json alongside auth tokens.\n\nImplementation — src/commands/login.js:\n1. After ui.printBanner(), check if endpoint was selected via flags:\n   - If config.resolveEndpoint() returns the default 'production' and no flags were passed AND process.stdin.isTTY:\n     a. Print: \"Select environment:\\n  [1] Production (web.mayar.id)\\n  [2] Sandbox (web.mayar.club)\"\n     b. Use ui.ask('Choose [1]: ') to read input\n     c. Default to '1' (production) on empty input\n     d. Map '1'/'production' → 'production', '2'/'sandbox' → 'sandbox'\n     e. Call config.setRuntimeEndpoint(choice)\n   - If NOT a TTY and no flags → proceed with production (or stored config) silently\n2. Add endpoint display: `${ui.dim('Endpoint:')} ${resolved}` after the auth server line\n3. After successful login, save endpoint at top level:\n   - config.save({ ...existing, endpoint: config.resolveEndpoint(), auth: { ... } })\n4. In --json mode: skip the interactive prompt; include endpoint in JSON output\n\nAcceptance:\n- `mayar login` (TTY, no flags) shows env prompt, defaults to production on Enter\n- `mayar login --sandbox` skips prompt, uses auth.mayar.club\n- After login, config.json has \"endpoint\" at top level matching selection\n- The MayarAuth SDK is initialized with the correct auth URL\n- Non-TTY proceeds with production silently",
       "priority": 2,
-      "status": "pending",
+      "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-001",
         "task-002"
       ],
-      "passes": false,
+      "passes": true,
       "files": [
         "src/commands/login.js"
       ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T09:13:56.299Z",
+      "completed_at": "2026-07-20T09:15:51.786Z",
       "error_log": []
     },
     {
@@ -62,19 +62,19 @@
       "title": "Add interactive environment selection to mayar init",
       "description": "Add an interactive TTY prompt to `mayar init` so first-time users can choose between sandbox and production. Save the chosen endpoint alongside the API key in config.json.\n\nImplementation — src/commands/init.js:\n1. After ui.printBanner() and the existing API key check/overwrite logic:\n   - If no --sandbox/--production/--env flag was set AND process.stdin.isTTY:\n     a. Print: \"Select environment:\\n  [1] Production (web.mayar.id)\\n  [2] Sandbox (web.mayar.club)\"\n     b. Use ui.ask('Choose [1]: ') to read input\n     c. Default to '1' (production) on empty input\n     d. Map '1'/'production' → 'production', '2'/'sandbox' → 'sandbox'\n     e. Call config.setRuntimeEndpoint(choice)\n   - If NOT a TTY and no flags → keep production as default\n2. Update the welcome message to reference the correct web URL based on environment:\n   - Replace hardcoded 'https://web.mayar.id' with the resolved web URL (web.mayar.id for production, web.mayar.club for sandbox)\n3. Save endpoint: `config.save({ apiKey: key.trim(), endpoint: config.resolveEndpoint(), savedAt: ... })`\n   - This replaces the hardcoded `endpoint: 'production'`\n4. Add success output line: `${ui.dim('Endpoint:')} ${resolved}`\n\nAcceptance:\n- `mayar init` (TTY, no flags) shows env prompt, defaults to production\n- `mayar init --sandbox` skips prompt, saves endpoint='sandbox'\n- After init, config.json contains both apiKey and endpoint\n- Welcome message URL matches chosen environment\n- Non-TTY without flags saves production endpoint",
       "priority": 2,
-      "status": "pending",
+      "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-001",
         "task-002"
       ],
-      "passes": false,
+      "passes": true,
       "files": [
         "src/commands/init.js"
       ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T09:17:10.507Z",
+      "completed_at": "2026-07-20T09:17:38.411Z",
       "error_log": []
     },
     {
@@ -82,19 +82,19 @@
       "title": "Create src/commands/skill.js — fetch SKILL.md from GitHub and install to agent target directories",
       "description": "Create a new `mayar skill install` command that fetches SKILL.md from the GitHub raw URL and writes it to multiple AI agent skill directories.\n\nImplementation — src/commands/skill.js (new file):\n1. Export `run(ctx)` where ctx = { apiKey, flags, positional }\n2. Parse subcommands: first positional must be 'install'\n   - No subcommand or 'help' → print usage and return\n   - Unknown subcommand → error + exit(1)\n3. For 'install':\n   a. Determine target from flags.target (default 'all'); valid: 'all', 'agents', 'claude', 'opencode', 'codex', 'cursor'\n   b. Fetch SKILL.md from https://raw.githubusercontent.com/mayarid/mayar-cli/refs/heads/main/SKILL.md using https.get\n      - Follow 301/302 redirects (up to 3 hops)\n      - On failure: print error, exit(1)\n   c. Define target files (under cwd):\n      - '.agents/skills/mayar/SKILL.md' (target: agents)\n      - '.claude/skills/mayar/SKILL.md' (target: claude)\n      - '.opencode/skills/mayar/SKILL.md' (target: opencode)\n      - '.codex/skills/mayar/SKILL.md' (target: codex)\n      - '.cursor/rules/mayar.mdc' (target: cursor) — implementation in task-006\n   d. For each applicable directory: create parent dirs with fs.mkdirSync({recursive:true})\n      - File exists && !flags.force → print \"Skipping: <path> (use --force to overwrite)\"\n      - Otherwise → write content, print \"Installed: <path>\"\n   e. If --json: output JSON array of {target, path, status}\n\nAcceptance:\n- `mayar skill install` fetches SKILL.md and writes to .agents/, .claude/, .opencode/, .codex/\n- `mayar skill install --target claude` only writes to .claude/\n- Running twice without --force shows skip messages\n- Running with --force overwrites existing files\n- Invalid --target value errors\n- Network errors print clear message and exit non-zero\n- --json outputs machine-readable JSON\n- Uses only Node.js built-in modules (https, fs, path)",
       "priority": 2,
-      "status": "pending",
+      "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-001",
         "task-002"
       ],
-      "passes": false,
+      "passes": true,
       "files": [
         "src/commands/skill.js"
       ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T09:19:25.496Z",
+      "completed_at": "2026-07-20T09:20:47.471Z",
       "error_log": []
     },
     {
@@ -102,18 +102,18 @@
       "title": "Cursor .mdc adaptation — generate .cursor/rules/mayar.mdc with YAML frontmatter",
       "description": "Extend the skill install command to generate a Cursor-specific .mdc rule file when --target is 'all' or 'cursor'. The .mdc file wraps SKILL.md content with Cursor-compatible YAML frontmatter.\n\nImplementation — extend src/commands/skill.js:\n1. Add function `generateCursorMdc(skillContent)` that returns the full .mdc content:\n   a. Strip the SKILL.md's own YAML frontmatter (lines between first `---` and second `---`) to avoid nested delimiters\n   b. Prepend Cursor .mdc frontmatter:\n      ```\n      ---\n      alwaysApply: true\n      description: Mayar CLI — interact with the Mayar payment platform (invoices, products, payments, customers, transactions, webhooks, QR codes, memberships, credit wallets, discounts, installments, bundling, SaaS/software licensing).\n      globs:\n        - \"**/*\"\n      ---\n      ```\n   c. After frontmatter, add the remaining SKILL.md body (without original frontmatter). If the original frontmatter can't be parsed (no `---` delimiters), include raw content as-is\n2. In the install loop, when target === 'cursor' (or 'all' covers cursor):\n   - Generate content via generateCursorMdc()\n   - Write to .cursor/rules/mayar.mdc\n   - Follow same force/skip logic\n   - Print \"Installed (Cursor .mdc): .cursor/rules/mayar.mdc\"\n\nAcceptance:\n- `mayar skill install --target cursor` creates .cursor/rules/mayar.mdc\n- .mdc has valid YAML frontmatter with alwaysApply, description, globs\n- No nested `---` YAML delimiters in the output\n- `mayar skill install` (default all) includes Cursor .mdc\n- `mayar skill install --target agents` does NOT generate .mdc\n- Force/skip logic works for .mdc files too",
       "priority": 3,
-      "status": "pending",
+      "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-005"
       ],
-      "passes": false,
+      "passes": true,
       "files": [
         "src/commands/skill.js"
       ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T09:22:05.267Z",
+      "completed_at": "2026-07-20T09:23:30.380Z",
       "error_log": []
     },
     {
@@ -121,19 +121,19 @@
       "title": "Register skill command in cli.js handlers + update HELP with skill and env flags sections",
       "description": "Wire the skill command into the CLI command routing and finalize the HELP text documentation.\n\nImplementation — src/cli.js:\n1. Add 'skill' to the `handlers` map:\n   - `skill: './commands/skill'`\n2. Update the HELP() function:\n   a. Add a new section under Setup:\n      `${ui.bold('Agent Skills:')}\n        skill install [--target <all|agents|claude|opencode|codex|cursor>] [--force]`\n      with description: \"Install Mayar SKILL.md into AI agent directories\"\n   b. Verify/ensure the Global flags section includes --sandbox, --production, --env <sandbox|production> (these may have been added in task-002; check and add if missing)\n   c. Verify/ensure the Environment section resolution order text is updated to the new chain (may have been added in task-002; check and add if missing)\n\nAcceptance:\n- `mayar skill install` runs the skill command\n- `mayar skill` without subcommand shows skill-specific help\n- `mayar -h` shows the new skill section\n- Global flags section includes --sandbox, --production, --env\n- Environment section shows correct resolution order\n- Unknown command 'skillx' still errors",
       "priority": 3,
-      "status": "pending",
+      "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-002",
         "task-006"
       ],
-      "passes": false,
+      "passes": true,
       "files": [
         "src/cli.js"
       ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T09:24:16.535Z",
+      "completed_at": "2026-07-20T09:25:25.633Z",
       "error_log": []
     }
   ]

@@ -24,53 +24,40 @@ const TARGET_PATHS = {
 };
 
 function usage() {
-  process.stdout.write(
-    ui.bold('mayar skill install') +
-      '  ' +
-      ui.dim('— install SKILL.md to AI agent directories') +
-      '\n\n',
-  );
-  process.stdout.write(ui.bold('Usage:') + '\n');
-  process.stdout.write('  mayar skill install [flags]\n\n');
-  process.stdout.write(ui.bold('Flags:') + '\n');
-  process.stdout.write(
-    '  --target <name>   Install to a specific target (default: all)\n',
-  );
-  process.stdout.write(
-    '                    Valid: all, agents, claude, opencode, codex, cursor\n',
-  );
-  process.stdout.write('  --force           Overwrite existing files\n');
-  process.stdout.write('  --json            Output JSON\n');
+  process.stdout.write(`${ui.bold('mayar skill install')}  ${ui.dim('— install SKILL.md to AI agent directories')}
+
+${ui.bold('Usage:')}
+  mayar skill install [flags]
+
+${ui.bold('Flags:')}
+  --target <name>   Install to a specific target (default: all)
+                    Valid: all, agents, claude, opencode, codex, cursor
+  --force           Overwrite existing files
+  --json            Output JSON
+`);
 }
 
-/**
- * Strip the SKILL.md's own YAML frontmatter (lines between the first `---`
- * and second `---`) and prepend Cursor .mdc frontmatter.
- * If the original frontmatter can't be parsed, the raw content is included as-is.
- */
 function generateCursorMdc(skillContent) {
   let body = skillContent;
   const lines = body.split('\n');
 
-  // Check if file starts with YAML frontmatter (--- on line 0)
+  // Strip the SKILL.md's own YAML frontmatter between `---` delimiters.
   if (lines[0].trim() === '---') {
-    // Find closing ---
     for (let i = 1; i < lines.length; i++) {
       if (lines[i].trim() === '---') {
-        // Remove frontmatter including both --- delimiter lines
         body = lines.slice(i + 1).join('\n');
         break;
       }
     }
   }
 
-  const frontmatter =
-    '---\n' +
-    'alwaysApply: true\n' +
-    'description: Mayar CLI — interact with the Mayar payment platform (invoices, products, payments, customers, transactions, webhooks, QR codes, memberships, credit wallets, discounts, installments, bundling, SaaS/software licensing).\n' +
-    'globs:\n' +
-    '  - "**/*"\n' +
-    '---\n';
+  const frontmatter = `---
+alwaysApply: true
+description: Mayar CLI — interact with the Mayar payment platform (invoices, products, payments, customers, transactions, webhooks, QR codes, memberships, credit wallets, discounts, installments, bundling, SaaS/software licensing).
+globs:
+  - "**/*"
+---
+`;
 
   return frontmatter + '\n' + body.trim() + '\n';
 }
@@ -172,7 +159,6 @@ async function run(ctx) {
 
     fs.mkdirSync(dir, { recursive: true });
 
-    // Use Cursor-adapted .mdc content for the cursor target
     const fileContent = t === 'cursor' ? generateCursorMdc(content) : content;
 
     if (fs.existsSync(filePath) && !flags.force) {
