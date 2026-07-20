@@ -20,7 +20,8 @@ ${ui.bold('Agent Skills:')}
                                               Install Mayar SKILL.md into AI agent directories
 
 ${ui.bold('Documentation:')}
-  docs [topic] [--json] [--refresh]          Browse Mayar API docs in the terminal
+  docs [topic] [--section S] [--limit N] [--compact] [--all] [--json] [--refresh]
+                                              Browse Mayar API docs in terminal (with filtering & ranking)
 
 ${ui.bold('Account:')}
   whoami                              Show identity behind the saved API key
@@ -169,6 +170,9 @@ function parseFlags(argv) {
     if (a === '--json') flags.json = true;
     else if (a === '--force') flags.force = true;
     else if (a === '--refresh') flags.refresh = true;
+    else if (a === '--compact') flags.compact = true;
+    else if (a === '--all') flags.all = true;
+    else if (a === '--section' || a === '--category') flags.section = argv[++i];
     else if (a === '--no-browser') flags['no-browser'] = true;
     else if (a === '--sandbox') flags.sandbox = true;
     else if (a === '--production') flags.production = true;
@@ -199,15 +203,17 @@ async function ensureKey(flags) {
   const cfg = config.load();
   if (cfg && cfg.apiKey) return cfg.apiKey;
   ui.printBanner();
-  process.stdout.write(`${ui.bold('Welcome to Mayar CLI.')}\n`);
-  process.stdout.write(`No API key found. Get yours from ${ui.cyan('https://web.mayar.id')} → Integration → API Key.\n\n`);
+  const endpoint = await ui.selectEnvironment(flags);
+  const webUrl = endpoint === 'sandbox' ? 'https://web.mayar.club' : 'https://web.mayar.id';
+  process.stdout.write('\n' + `${ui.bold('Welcome to Mayar CLI.')}\n`);
+  process.stdout.write(`No API key found. Get yours from ${ui.cyan(webUrl)} → Integration → API Key.\n\n`);
   if (!process.stdin.isTTY) {
     process.stderr.write(ui.red('Stdin is not a TTY — cannot prompt. Run `mayar init` interactively or pass --api-key.\n'));
     process.exit(1);
   }
-  const key = await ui.askSecret(ui.bold('Paste your production API key: '));
+  const key = await ui.askSecret(ui.bold(`Paste your ${endpoint} API key: `));
   if (!key.trim()) { process.stderr.write(ui.red('No key provided. Aborting.\n')); process.exit(1); }
-  config.save({ apiKey: key.trim(), endpoint: config.resolveEndpoint(), savedAt: new Date().toISOString() });
+  config.save({ apiKey: key.trim(), endpoint, savedAt: new Date().toISOString() });
   process.stdout.write(ui.green(`✓ Saved to ${config.file}`) + '\n\n');
   return key.trim();
 }

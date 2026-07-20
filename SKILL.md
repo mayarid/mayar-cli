@@ -1,12 +1,13 @@
 ---
 name: mayar
 display_name: Mayar CLI
-version: "1.0.0"
+version: "1.2.0"
 description: >
-  Interact with the Mayar payment platform (invoices, products, payments,
-  customers, transactions, webhooks, QR codes, memberships, credit wallets,
-  discounts, installments, bundling, SaaS/software licensing) from any AI
-  agent or shell. Targets Mayar API v2. Node.js 18+.
+  Interact with the Mayar payment platform (invoices, products, payment links,
+  single payments, customers, transactions, webhooks, QR codes, memberships,
+  credit wallets, discounts, installments, bundling, SaaS/software licensing,
+  documentation, and agent skill management) from any AI agent or shell.
+  Targets Mayar API v2. Node.js 18+.
 author: Mayar bot
 license: MIT
 homepage: https://github.com/mayarid/mayar-cli
@@ -24,12 +25,15 @@ invoke_prefix: npx -y mayar@latest
 env:
   MAYAR_API_KEY:
     description: Mayar API key. Obtain from web.mayar.id → Integration → API Key.
-    required: true
+    required: false
     secret: true
   MAYAR_API_URL:
-    description: Override API base URL. Defaults to https://api.mayar.id.
+    description: Override API base URL. Defaults to https://api.mayar.id (or api.mayar.club for sandbox).
     required: false
     default: https://api.mayar.id
+  MAYAR_AUTH_URL:
+    description: Override Auth server base URL for login.
+    required: false
 auth:
   type: bearer
   resolution_order:
@@ -37,10 +41,17 @@ auth:
     - env: MAYAR_API_KEY
     - file: ~/.config/mayar/config.json
 capabilities:
+  - docs
+  - agent-skills
+  - environment-switching
   - invoices
+  - invoice-status
   - products
+  - product-status
   - product-creation
+  - payment-links
   - payments
+  - payment-status
   - customers
   - transactions
   - reviews
@@ -62,8 +73,8 @@ capabilities:
 
 # Mayar CLI — Agent Skill
 
-This document describes how AI agents (Claude Code, OpenClaw, and others)
-should install, authenticate, and use the `mayar` CLI tool.
+This document describes how AI agents (Claude Code, OpenClaw, Codex, Cursor, and others)
+should install, authenticate, select environments, search docs, and execute commands using the `mayar` CLI tool.
 
 ## Quick start for agents
 
@@ -72,9 +83,9 @@ should install, authenticate, and use the `mayar` CLI tool.
 npx -y mayar@latest whoami
 ```
 
-## Authentication flow
+## Setup & Authentication
 
-**Step 1 — detect active user**
+**Step 1 — Detect active user & environment**
 
 Run `whoami` to check if a valid API key is already configured:
 
@@ -82,115 +93,193 @@ Run `whoami` to check if a valid API key is already configured:
 npx -y mayar@latest whoami --json
 ```
 
-Successful output contains `"valid": true` and the merchant's `name`, `email`,
-and `accountId`. If the key is valid, proceed directly to the requested task.
+Successful output contains `"valid": true` and merchant details (`name`, `email`, `accountId`).
 
-**Step 2 — handle missing or invalid key**
+**Step 2 — Environment selection (Production vs Sandbox)**
 
-If `whoami` exits non-zero or returns `"valid": false`, the agent MUST stop
-and ask the user for their API key using one of the following options:
+Target production (`api.mayar.id`) or sandbox (`api.mayar.club`) via flags or environment variables:
 
-> **Option A — environment variable (recommended for non-interactive agents):**
->
-> Ask the user to set:
+```bash
+# Production (default)
+npx -y mayar@latest --production whoami
+
+# Sandbox
+npx -y mayar@latest --sandbox whoami
+# OR
+npx -y mayar@latest --env sandbox whoami
+```
+
+> **Endpoint Resolution Order:**
+> Invocation flags (`--sandbox` / `--production` / `--env`) → `MAYAR_API_URL` → `NODE_ENV=development` → saved config (`~/.config/mayar/config.json`) → Production (`api.mayar.id`).
+
+**Step 3 — Handle missing or invalid key**
+
+If `whoami` exits non-zero or returns `"valid": false`, authentication is needed:
+
+> **Option A — Non-interactive API key command (recommended for agents):**
 > ```bash
-> export MAYAR_API_KEY=<their_key>
+> npx -y mayar@latest api-key <your_api_key>
 > ```
-> Then re-run the original command.
-
-> **Option B — one-time flag (single command):**
 >
-> Ask the user to provide the key and pass it as:
+> **Option B — Environment variable:**
 > ```bash
-> npx -y mayar@latest --api-key <their_key> whoami
+> export MAYAR_API_KEY=<your_api_key>
 > ```
-
-> **Option C — interactive setup (terminal agents only):**
 >
-> If the agent has access to an interactive TTY:
+> **Option C — Pass key per invocation:**
+> ```bash
+> npx -y mayar@latest --api-key <your_api_key> whoami
+> ```
+>
+> **Option D — Browser OAuth login (interactive sessions):**
+> ```bash
+> npx -y mayar@latest login [--no-browser]
+> ```
+>
+> **Option E — Interactive wizard:**
 > ```bash
 > npx -y mayar@latest init
 > ```
 
-Agents must NEVER fabricate or guess an API key. Always stop and ask the user.
+Get an API key at: **https://web.mayar.id → Integration → API Key**
 
-Get a key at: **https://web.mayar.id → Integration → API Key**
+---
 
-## Usage reference
+## Agent Skills Installation
 
-All commands use the pattern:
+Agents can install Mayar SKILL.md instructions into local workspace/agent configuration directories:
 
+```bash
+# Install to all supported agent directories
+npx -y mayar@latest skill install --target all
+
+# Target specific agent frameworks (claude, opencode, codex, cursor, agents)
+npx -y mayar@latest skill install --target claude
+npx -y mayar@latest skill install --target cursor --force
 ```
-npx -y mayar@latest <command> [subcommand] [args] [flags]
+
+---
+
+## Documentation Search (`docs`)
+
+Search or browse Mayar API documentation directly from the CLI:
+
+```bash
+# Search topics with relevance ranking (returns top 5 matches by default)
+npx -y mayar@latest docs payment
+
+# Fetch full documentation content for a specific slug/topic
+npx -y mayar@latest docs create-payment-link
+
+# Filter by section/category
+npx -y mayar@latest docs --section "Invoice"
+
+# JSON output with compact topic metadata (saves ~65% tokens for LLM context)
+npx -y mayar@latest docs payment --json --compact --limit 3
+
+# Show all matching topics without capping
+npx -y mayar@latest docs payment --all
+
+# Force refresh cached llms.txt index
+npx -y mayar@latest docs --refresh
+```
+
+---
+
+## Usage Reference
+
+### Setup & Config
+
+```bash
+npx -y mayar@latest init                                # Interactive setup (key + env)
+npx -y mayar@latest login [--no-browser]                # Browser OAuth sign-in
+npx -y mayar@latest api-key <key>                       # Save API key non-interactively
+npx -y mayar@latest config show                         # Show config path & masked key
+npx -y mayar@latest config reset                        # Reset saved API key & config
 ```
 
 ### Account
 
 ```bash
-npx -y mayar@latest whoami              # verify key + show merchant identity
-npx -y mayar@latest balance             # account balance
+npx -y mayar@latest whoami              # Verify key + show identity
+npx -y mayar@latest balance             # Get account balance
 ```
 
 ### Invoices
 
 ```bash
-npx -y mayar@latest invoice list [--page N --pageSize N]
+npx -y mayar@latest invoice list [--limit N --after CURSOR]
 npx -y mayar@latest invoice get <id>
+npx -y mayar@latest invoice create --data '<json|@file>'
+npx -y mayar@latest invoice edit <id> --data '<json|@file>'
+npx -y mayar@latest invoice status <id> <open|close|active|closed|unlisted>
 npx -y mayar@latest invoice close <id>
 npx -y mayar@latest invoice reopen <id>
-npx -y mayar@latest invoice create --data '<json>'
-npx -y mayar@latest invoice create --data @file.json
+npx -y mayar@latest invoice filter --email <email> [--limit N --after CURSOR]
 ```
 
-### Products
+### Products & Payment Links
 
 ```bash
-npx -y mayar@latest product list [--page N --pageSize N]
+npx -y mayar@latest product list [--limit N --after CURSOR --search Q --type T]
 npx -y mayar@latest product search <keyword>
 npx -y mayar@latest product type <ebook|course|membership|saas|event|webinar>
 npx -y mayar@latest product get <id>
+npx -y mayar@latest product create --type <T> --data '<json|@file>'
+npx -y mayar@latest product edit <id> --data '<json|@file>'
+npx -y mayar@latest product status <id> <open|close|active|closed|unlisted>
 npx -y mayar@latest product close <id>
 npx -y mayar@latest product reopen <id>
+npx -y mayar@latest product transactions <id> [--limit N --after CURSOR]
+npx -y mayar@latest payment-link edit <id> --data '<json|@file>'
 ```
 
-### Payments
+### Single Payments
 
 ```bash
-npx -y mayar@latest payment list
+npx -y mayar@latest payment list [--limit N --after CURSOR --status paid|unpaid|closed]
 npx -y mayar@latest payment get <id>
-npx -y mayar@latest payment close <id>
-npx -y mayar@latest payment reopen <id>
-npx -y mayar@latest payment create --data '<json>'
+npx -y mayar@latest payment create --data '<json|@file>'
+npx -y mayar@latest payment edit <id> --data '<json|@file>'
+npx -y mayar@latest payment status <id> <open|close|active|closed|unlisted>
 ```
 
 ### Customers
 
 ```bash
-npx -y mayar@latest customer list [--page N --pageSize N]
-npx -y mayar@latest customer create --data '<json>'
-npx -y mayar@latest customer search <email>            # look up by email
+npx -y mayar@latest customer list [--limit N --after CURSOR]
+npx -y mayar@latest customer get <id>
+npx -y mayar@latest customer create --data '<json|@file>'
+npx -y mayar@latest customer search <email>
 npx -y mayar@latest customer update <fromEmail> <toEmail>
-npx -y mayar@latest customer magic-link <email>        # email portal login link
+npx -y mayar@latest customer magic-link <email>
 ```
 
 ### Transactions
 
 ```bash
-npx -y mayar@latest tx list   [--page N --pageSize N]   # paid
-npx -y mayar@latest tx unpaid [--page N --pageSize N]   # unpaid
-npx -y mayar@latest tx daily                            # today's volume + count
+npx -y mayar@latest tx list   [--limit N --after CURSOR --status --customerId --startAt --endAt]
+npx -y mayar@latest tx unpaid [--limit N --after CURSOR]
+npx -y mayar@latest tx daily
+npx -y mayar@latest tx product <productId> [--limit N --after CURSOR]
 ```
 
 ### Reviews
 
 ```bash
-npx -y mayar@latest review list [--page N --pageSize N]
+npx -y mayar@latest review list [--limit N --after CURSOR --status --paymentLinkId --rating]
+npx -y mayar@latest review stats [productId]
+npx -y mayar@latest review create --data '<json|@file>'
+npx -y mayar@latest review update <id> --data '<json|@file>'
+npx -y mayar@latest review bulk-status --data '<json|@file>'
 ```
 
-### Dynamic QR
+### QR & Payment Channels
 
 ```bash
-npx -y mayar@latest qrcode <amount_in_idr>
+npx -y mayar@latest qrcode <amount_in_idr>     # Dynamic QRIS
+npx -y mayar@latest qrcode static              # Static QRIS image
+npx -y mayar@latest qrcode channels            # Enabled payment channels
 ```
 
 ### Webhooks
@@ -198,36 +287,73 @@ npx -y mayar@latest qrcode <amount_in_idr>
 ```bash
 npx -y mayar@latest webhook register <url>
 npx -y mayar@latest webhook test <url>
-npx -y mayar@latest webhook history [--page N --pageSize N]
+npx -y mayar@latest webhook history [--limit N --after CURSOR]
+npx -y mayar@latest webhook new-history [--limit N --after CURSOR]
+npx -y mayar@latest webhook retry <historyId>
 ```
 
-## Global flags
-
-| Flag              | Description                                           |
-| ----------------- | ----------------------------------------------------- |
-| `--json`          | Output raw JSON (machine-readable, pipe to `jq`)      |
-| `--api-key <key>` | Override saved key for this invocation                |
-| `--page N`        | Pagination page (default 1)                           |
-| `--pageSize N`    | Items per page (default 10)                           |
-| `-v, --version`   | Print version                                         |
-| `-h, --help`      | Print help                                            |
-
-## JSON output
-
-Always use `--json` when the agent needs to parse the response:
+### Memberships & Licensing
 
 ```bash
-npx -y mayar@latest invoice list --json | jq '.data[] | {id, status}'
-npx -y mayar@latest whoami --json | jq '{valid, name: .decoded.name}'
+# Memberships
+npx -y mayar@latest membership members --productId <id>
+npx -y mayar@latest membership tiers --productId <id>
+npx -y mayar@latest membership register --data '<json|@file>'
+
+# SaaS & Software Licensing
+npx -y mayar@latest saas activate <licenseCode> <productId>
+npx -y mayar@latest saas deactivate <licenseCode> <productId>
+npx -y mayar@latest saas verify <licenseCode> <productId>
+npx -y mayar@latest software verify <licenseCode> <productId>
 ```
 
-## Error handling
+---
 
-- Non-zero exit code = command failed
-- `"valid": false` in `whoami --json` = invalid or expired API key
-- HTTP errors print `API <status> — <message>` on stderr
+## Global Flags
 
-## Agent decision tree
+| Flag | Description |
+| --- | --- |
+| `--json` | Output raw JSON (machine-readable) |
+| `--compact` | Compact JSON output (slug, title, section only for docs) |
+| `--limit N` | Page size / result limit (v2 pagination, default 10, max 50) |
+| `--after CURSOR` | Cursor for pagination (`nextStartingAfter` from previous response) |
+| `--api-key <key>` | Override API key for invocation |
+| `--sandbox` | Target sandbox environment (`api.mayar.club`) |
+| `--production` | Target production environment (`api.mayar.id`) |
+| `--env <value>` | Set environment: `sandbox` or `production` |
+| `--data <json|@file>` | Inline JSON string or path to JSON file (`@file.json`) |
+| `--refresh` | Force re-fetch cached data (for `docs`) |
+| `-v, --version` | Print version |
+| `-h, --help` | Print help |
+
+---
+
+## JSON Output Examples
+
+Always use `--json` when parsing programmatically:
+
+```bash
+# List active invoices
+npx -y mayar@latest invoice list --json | jq '.data[] | {id, status, amount}'
+
+# Check merchant identity
+npx -y mayar@latest whoami --json | jq '{valid, name: .decoded.name}'
+
+# Query documentation in compact JSON mode
+npx -y mayar@latest docs payment --json --compact --limit 3
+```
+
+---
+
+## Error Handling
+
+- **Non-zero exit code**: Command failed or invalid parameters.
+- **`"valid": false`**: API key missing or unauthorized.
+- **HTTP Errors**: Standardized error format `{ "statusCode": 400, "messages": "..." }`.
+
+---
+
+## Agent Decision Tree
 
 ```
 START
@@ -235,9 +361,10 @@ START
         ├─ exit 0 + valid=true  →  proceed with task
         └─ exit non-zero or valid=false
               └─ ask user:
-                    "Please provide your Mayar API key.
-                     You can either:
-                     (A) set the MAYAR_API_KEY environment variable, or
-                     (B) run: npx -y mayar@latest init
-                     Get your key from https://web.mayar.id → Integration → API Key"
+                    "Please provide your Mayar API key or choose setup:
+                     (A) npx -y mayar@latest api-key <KEY>
+                     (B) set MAYAR_API_KEY environment variable
+                     (C) npx -y mayar@latest login
+                     (D) npx -y mayar@latest init
+                     Get your key at https://web.mayar.id → Integration → API Key"
 ```

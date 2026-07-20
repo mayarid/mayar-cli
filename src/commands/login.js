@@ -18,24 +18,7 @@ function decodeJwt(token) {
 async function run({ flags }) {
   if (!flags.json) {
     ui.printBanner();
-
-    // Interactive environment selection when no explicit endpoint is set.
-    const hasExplicitFlags = flags.sandbox || flags.production || flags.env;
-    if (!hasExplicitFlags && process.stdin.isTTY) {
-      const cfg = config.load();
-      if (!cfg?.endpoint && config.resolveEndpoint() === 'production') {
-        process.stdout.write('Select environment:\n');
-        process.stdout.write('  [1] Production (web.mayar.id)\n');
-        process.stdout.write('  [2] Sandbox (web.mayar.club)\n');
-        const choice = await ui.ask('Choose [1]: ');
-        const trimmed = choice.trim().toLowerCase();
-        if (trimmed === '2' || trimmed === 'sandbox') {
-          config.setRuntimeEndpoint('sandbox');
-        } else {
-          config.setRuntimeEndpoint('production');
-        }
-      }
-    }
+    await ui.selectEnvironment(flags);
   }
 
   const authUrl = config.authBaseUrl();

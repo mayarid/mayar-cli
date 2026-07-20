@@ -99,7 +99,7 @@ function table(rows, columns) {
 }
 
 async function pickFromList(items, opts = {}) {
-  const { displayKey, descriptionKey } = opts;
+  const { displayKey, descriptionKey, defaultIndex = 0 } = opts;
   const n = items.length;
 
   // Render numbered list
@@ -119,13 +119,18 @@ async function pickFromList(items, opts = {}) {
 
   // Prompt and validate in a loop
   while (true) {
-    const answer = await ask('Pick a number (or q to quit): ');
+    const defaultNum = defaultIndex + 1;
+    const answer = await ask(`Pick a number [${defaultNum}] (or q to quit): `);
 
     if (answer === 'q' || answer === 'Q') {
       return null;
     }
 
     const trimmed = answer.trim();
+    if (trimmed === '') {
+      return items[defaultIndex];
+    }
+
     const num = parseInt(trimmed, 10);
 
     if (isNaN(num) || String(num) !== trimmed) {
@@ -142,7 +147,46 @@ async function pickFromList(items, opts = {}) {
   }
 }
 
+async function selectEnvironment(flags = {}) {
+  const config = require('./config');
+
+  if (flags.sandbox) {
+    config.setRuntimeEndpoint('sandbox');
+    return 'sandbox';
+  }
+  if (flags.production) {
+    config.setRuntimeEndpoint('production');
+    return 'production';
+  }
+  if (flags.env) {
+    const v = String(flags.env).toLowerCase();
+    if (v === 'sandbox' || v === 'production') {
+      config.setRuntimeEndpoint(v);
+      return v;
+    }
+  }
+
+  if (process.stdin.isTTY) {
+    process.stdout.write(bold('Select Environment:') + '\n');
+    const environments = [
+      { title: 'Production', value: 'production', description: 'Live environment (web.mayar.id / api.mayar.id)' },
+      { title: 'Sandbox', value: 'sandbox', description: 'Testing environment (web.mayar.club / api.mayar.club)' },
+    ];
+    const selected = await pickFromList(environments, {
+      displayKey: 'title',
+      descriptionKey: 'description',
+      defaultIndex: 0,
+    });
+
+    const chosen = selected ? selected.value : 'production';
+    config.setRuntimeEndpoint(chosen);
+    return chosen;
+  }
+
+  return config.resolveEndpoint();
+}
+
 module.exports = {
-  printBanner, ask, askSecret, jsonOut, table, pickFromList,
+  printBanner, ask, askSecret, jsonOut, table, pickFromList, selectEnvironment,
   dim, bold, red, green, yellow, cyan, magenta,
 };

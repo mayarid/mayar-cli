@@ -11,27 +11,13 @@ async function run({ flags }) {
     if (!/^y/i.test(ans.trim())) { process.stdout.write('Cancelled.\n'); return; }
   }
 
-  // Interactive environment selection when no explicit endpoint flag was set.
-  const hasExplicitFlags = flags.sandbox || flags.production || flags.env;
-  if (!hasExplicitFlags && process.stdin.isTTY) {
-    process.stdout.write('Select environment:\n');
-    process.stdout.write('  [1] Production (web.mayar.id)\n');
-    process.stdout.write('  [2] Sandbox (web.mayar.club)\n');
-    const choice = await ui.ask('Choose [1]: ');
-    const trimmed = choice.trim().toLowerCase();
-    if (trimmed === '2' || trimmed === 'sandbox') {
-      config.setRuntimeEndpoint('sandbox');
-    } else {
-      config.setRuntimeEndpoint('production');
-    }
-  }
-
-  const endpoint = config.resolveEndpoint();
+  // Interactive environment selection
+  const endpoint = await ui.selectEnvironment(flags);
   const webUrl = endpoint === 'sandbox' ? 'https://web.mayar.club' : 'https://web.mayar.id';
 
-  process.stdout.write(`${ui.bold('Welcome to Mayar CLI.')}\n`);
+  process.stdout.write('\n' + `${ui.bold('Welcome to Mayar CLI.')}\n`);
   process.stdout.write(`Get your key from ${ui.cyan(webUrl)} → Integration → API Key.\n\n`);
-  const key = await ui.askSecret(ui.bold('Paste your production API key: '));
+  const key = await ui.askSecret(ui.bold(`Paste your ${endpoint} API key: `));
   if (!key.trim()) { process.stderr.write(ui.red('No key provided.\n')); process.exit(1); }
   config.save({ apiKey: key.trim(), endpoint, savedAt: new Date().toISOString() });
   process.stdout.write(ui.green(`✓ Saved to ${config.file}`) + '\n');

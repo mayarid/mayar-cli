@@ -253,6 +253,18 @@ async function run(ctx) {
   const topic = positional[0] || null;
   const refresh = flags.refresh || false;
   const json = flags.json || false;
+  const sectionFilter = flags.section || flags.category || null;
+  const compact = flags.compact || false;
+  const showAll = flags.all || false;
+
+  // Default search limit is 5 unless --all or explicit --limit N is given
+  let limit = null;
+  if (flags.limit) {
+    const parsed = parseInt(flags.limit, 10);
+    if (!isNaN(parsed) && parsed > 0) limit = parsed;
+  } else if (topic && !showAll) {
+    limit = 5;
+  }
 
   // Fetch and parse the topic index
   let raw;
@@ -268,7 +280,32 @@ async function run(ctx) {
     process.exit(1);
   }
 
-  const { sections } = parseLLMsTxt(raw);
+  const { sections: parsedSections } = parseLLMsTxt(raw);
+
+  // Filter sections if --section filter is provided
+  let sections = parsedSections;
+  if (sectionFilter) {
+    const secLower = sectionFilter.toLowerCase();
+    const matchedSections = parsedSections.filter((sec) =>
+      sec.name.toLowerCase().includes(secLower),
+    );
+    if (matchedSections.length > 0) {
+      sections = matchedSections;
+    } else {
+      // Fallback: Filter topics by section, URL path, or title matching the section filter
+      sections = parsedSections
+        .map((sec) => ({
+          ...sec,
+          topics: sec.topics.filter(
+            (t) =>
+              t.section.toLowerCase().includes(secLower) ||
+              t.url.toLowerCase().includes(secLower) ||
+              t.title.toLowerCase().includes(secLower),
+          ),
+        }))
+        .filter((sec) => sec.topics.length > 0);
+    }
+  }
 
   // Build flat allTopics array for lookup/filtering
   const allTopics = [];
@@ -278,12 +315,26 @@ async function run(ctx) {
     }
   }
 
+  // Helper for formatting topic JSON output based on --compact
+  const formatTopic = (t) => {
+    if (compact) {
+      return { slug: t.slug, title: t.title, section: t.section };
+    }
+    return {
+      slug: t.slug,
+      title: t.title,
+      url: t.url,
+      description: t.description,
+      section: t.section,
+    };
+  };
+
   // --json mode: short-circuit before any interactive or plain-text output
   if (json) {
     if (topic) {
       const inputSlug = slugify(topic);
       const inputLower = topic.toLowerCase();
-      const matches = allTopics.filter(
+      let matches = allTopics.filter(
         (t) =>
           t.slug.includes(inputSlug) ||
           t.title.toLowerCase().includes(inputLower),
@@ -307,6 +358,9 @@ async function run(ctx) {
         return;
       }
 
+      // Sort matches by relevance score
+      matches.sort((a, b) => similarityScore(topic, b.title) - similarityScore(topic, a.title));
+
       if (matches.length === 1) {
         // Single match: fetch page content and render
         const m = matches[0];
@@ -326,27 +380,30 @@ async function run(ctx) {
         return;
       }
 
-      // Multiple matches: return match list, no prompt
+      // Multiple matches: return capped match list
+      const totalMatches = matches.length;
+      if (limit && matches.length > limit) {
+        matches = matches.slice(0, limit);
+      }
+
       ui.jsonOut({
-        matches: matches.map((m) => ({
-          topic: m.slug,
-          title: m.title,
-          url: m.url,
-          description: m.description,
-        })),
+        total: totalMatches,
+        showing: matches.length,
+        matches: matches.map(formatTopic),
       });
       return;
     }
 
-    // No topic argument: output all topics
+    // No topic argument: output topics (apply limit if specified)
+    let outputTopics = allTopics;
+    if (limit && outputTopics.length > limit) {
+      outputTopics = outputTopics.slice(0, limit);
+    }
+
     ui.jsonOut({
-      topics: allTopics.map((t) => ({
-        slug: t.slug,
-        title: t.title,
-        url: t.url,
-        description: t.description,
-        section: t.section,
-      })),
+      total: allTopics.length,
+      showing: outputTopics.length,
+      topics: outputTopics.map(formatTopic),
     });
     return;
   }
@@ -356,9 +413,7 @@ async function run(ctx) {
     const inputSlug = slugify(topic);
     const inputLower = topic.toLowerCase();
 
-    const matches = allTopics.filter((t) => {
-      // Input slug is a substring of the topic slug
-      // OR input is a case-insensitive substring of the topic title
+    let matches = allTopics.filter((t) => {
       return t.slug.includes(inputSlug) || t.title.toLowerCase().includes(inputLower);
     });
 
@@ -387,6 +442,9 @@ async function run(ctx) {
       return;
     }
 
+    // Sort matches by relevance score
+    matches.sort((a, b) => similarityScore(topic, b.title) - similarityScore(topic, a.title));
+
     if (matches.length === 1) {
       // Single match — fetch page content and render
       const m = matches[0];
@@ -404,12 +462,23 @@ async function run(ctx) {
 
       process.stdout.write(ui.dim('───') + '\n');
     } else {
-      // Multiple matches — numbered list
-      process.stdout.write(
-        `${matches.length} topics match "${topic}":` + '\n\n',
-      );
-      for (let i = 0; i < matches.length; i++) {
-        const m = matches[i];
+      // Multiple matches — numbered list with optional capping
+      const totalMatches = matches.length;
+      let displayMatches = matches;
+
+      if (limit && matches.length > limit) {
+        displayMatches = matches.slice(0, limit);
+        process.stdout.write(
+          `Showing top ${limit} of ${totalMatches} topics matching "${topic}" ${ui.dim('(use --all to see all)')}:` + '\n\n',
+        );
+      } else {
+        process.stdout.write(
+          `${totalMatches} topics match "${topic}":` + '\n\n',
+        );
+      }
+
+      for (let i = 0; i < displayMatches.length; i++) {
+        const m = displayMatches[i];
         process.stdout.write(
           `  ${i + 1}. ${m.title} ${ui.dim('(' + m.section + ')')}` + '\n',
         );
@@ -420,6 +489,11 @@ async function run(ctx) {
     }
   } else {
     // --- No topic argument ---
+    let displayTopics = allTopics;
+    if (limit && displayTopics.length > limit) {
+      displayTopics = displayTopics.slice(0, limit);
+    }
+
     if (process.stdout.isTTY) {
       // Interactive TTY mode — show section headers, flatten topics, pickFromList
       for (const sec of sections) {
@@ -427,7 +501,7 @@ async function run(ctx) {
       }
       process.stdout.write('\n');
 
-      const selected = await ui.pickFromList(allTopics, {
+      const selected = await ui.pickFromList(displayTopics, {
         displayKey: 'title',
         descriptionKey: 'description',
       });
