@@ -16,13 +16,35 @@ function decodeJwt(token) {
 }
 
 async function run({ flags }) {
+  if (!flags.json) {
+    ui.printBanner();
+
+    // Interactive environment selection when no explicit endpoint is set.
+    const hasExplicitFlags = flags.sandbox || flags.production || flags.env;
+    if (!hasExplicitFlags && process.stdin.isTTY) {
+      const cfg = config.load();
+      if (!cfg?.endpoint && config.resolveEndpoint() === 'production') {
+        process.stdout.write('Select environment:\n');
+        process.stdout.write('  [1] Production (web.mayar.id)\n');
+        process.stdout.write('  [2] Sandbox (web.mayar.club)\n');
+        const choice = await ui.ask('Choose [1]: ');
+        const trimmed = choice.trim().toLowerCase();
+        if (trimmed === '2' || trimmed === 'sandbox') {
+          config.setRuntimeEndpoint('sandbox');
+        } else {
+          config.setRuntimeEndpoint('production');
+        }
+      }
+    }
+  }
+
   const authUrl = config.authBaseUrl();
   const auth = new MayarAuth(authUrl);
 
   if (!flags.json) {
-    ui.printBanner();
     process.stdout.write(`${ui.bold('Sign in to Mayar')}\n`);
-    process.stdout.write(`${ui.dim('Auth server:')} ${authUrl}\n\n`);
+    process.stdout.write(`${ui.dim('Auth server:')} ${authUrl}\n`);
+    process.stdout.write(`${ui.dim('Endpoint:')} ${config.resolveEndpoint()}\n\n`);
     process.stdout.write('Opening your browser to complete Google sign-in…\n');
   }
 
@@ -50,6 +72,7 @@ async function run({ flags }) {
   const existing = config.load() || {};
   config.save({
     ...existing,
+    endpoint: config.resolveEndpoint(),
     auth: {
       authToken,
       refreshToken: refreshToken || null,
@@ -62,7 +85,7 @@ async function run({ flags }) {
   });
 
   if (flags.json) {
-    ui.jsonOut({ ok: true, email, name, expiresAt, authUrl });
+    ui.jsonOut({ ok: true, email, name, expiresAt, authUrl, endpoint: config.resolveEndpoint() });
     return;
   }
 
