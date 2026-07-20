@@ -44,6 +44,38 @@ function usage() {
 }
 
 /**
+ * Strip the SKILL.md's own YAML frontmatter (lines between the first `---`
+ * and second `---`) and prepend Cursor .mdc frontmatter.
+ * If the original frontmatter can't be parsed, the raw content is included as-is.
+ */
+function generateCursorMdc(skillContent) {
+  let body = skillContent;
+  const lines = body.split('\n');
+
+  // Check if file starts with YAML frontmatter (--- on line 0)
+  if (lines[0].trim() === '---') {
+    // Find closing ---
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '---') {
+        // Remove frontmatter including both --- delimiter lines
+        body = lines.slice(i + 1).join('\n');
+        break;
+      }
+    }
+  }
+
+  const frontmatter =
+    '---\n' +
+    'alwaysApply: true\n' +
+    'description: Mayar CLI — interact with the Mayar payment platform (invoices, products, payments, customers, transactions, webhooks, QR codes, memberships, credit wallets, discounts, installments, bundling, SaaS/software licensing).\n' +
+    'globs:\n' +
+    '  - "**/*"\n' +
+    '---\n';
+
+  return frontmatter + '\n' + body.trim() + '\n';
+}
+
+/**
  * Fetch SKILL.md from the GitHub raw URL.
  * Follows 301/302 redirects up to 3 hops.
  */
@@ -140,6 +172,9 @@ async function run(ctx) {
 
     fs.mkdirSync(dir, { recursive: true });
 
+    // Use Cursor-adapted .mdc content for the cursor target
+    const fileContent = t === 'cursor' ? generateCursorMdc(content) : content;
+
     if (fs.existsSync(filePath) && !flags.force) {
       if (!flags.json) {
         process.stdout.write(
@@ -148,9 +183,10 @@ async function run(ctx) {
       }
       results.push({ target: t, path: filePath, status: 'skipped' });
     } else {
-      fs.writeFileSync(filePath, content);
+      fs.writeFileSync(filePath, fileContent);
       if (!flags.json) {
-        process.stdout.write(`Installed: ${relPath}\n`);
+        const label = t === 'cursor' ? 'Installed (Cursor .mdc)' : 'Installed';
+        process.stdout.write(`${label}: ${relPath}\n`);
       }
       results.push({ target: t, path: filePath, status: 'installed' });
     }
