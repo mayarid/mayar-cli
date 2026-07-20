@@ -1,160 +1,266 @@
-## Session 2026-07-20 — task-001: Config refactor
+# Jonggrang Progress Log — cli
+# Created: 2026-06-09
 
-### Completed
-- Added `_runtimeEndpoint` module-level variable, `setRuntimeEndpoint()` with strict validation (sandbox/production/null, throws on invalid)
-- Added `resolveEndpoint()` with priority chain: runtime override > NODE_ENV > stored config > 'production' default
-- Refactored `apiBaseUrl()` and `authBaseUrl()` to use `resolveEndpoint()` instead of old `isDev()`
-- Updated `isDev()` to delegate to `resolveEndpoint() === 'sandbox'` for backward compatibility
-- Exported `setRuntimeEndpoint` and `resolveEndpoint` alongside existing exports
-- All 70 existing tests pass, including config.test.js save/load/clear round-trip tests
-- Smoke-tested all acceptance criteria manually
+## task-001 — Infrastructure setup (test/ dir, scripts, helpers)
+- Added test/helpers.js (CommonJS, matches src/ style; zero deps, node: builtins only):
+  captureOutput() (patches stdout/stderr write + console.log/error, getters + restore()),
+  tempConfigHome() (mkdtempSync under os.tmpdir, sets XDG_CONFIG_HOME, cleanup restores env + rm -rf),
+  startServer() (http on port 0 / 127.0.0.1, returns {url,port,server,close}, default 200 "{}").
+- Added npm scripts: "test": "node --test", "test:coverage": "node --test --experimental-test-coverage".
+- GOTCHA: `node --test` runs EVERY file under test/, including helpers.js, counting it as 1
+  passing no-op "test". Harmless (helpers only define fns), but future helpers must stay side-effect-free.
+  Exit code is 0 with no real tests yet — acceptance met.
+- tempConfigHome MUST be called BEFORE require('../src/config') — config.js computes its path at load time.
 
-### Key Decisions
-- `resolveEndpoint()` calls `load()` each time to read stored config — simple and correct, no caching layer needed at this stage
-- Env vars (`MAYAR_API_URL`/`MAYAR_AUTH_URL`) remain absolute precedence in their respective URL functions
+## task-002 — Export parseFlags from src/cli.js
+- Changed `module.exports = { run };` → `module.exports = { run, parseFlags };` (one-line additive).
+- ensureKey/interactive/process.exit/stdin paths left private and untouched — only parseFlags surfaced.
+- Verified: require('../src/cli').parseFlags is a function; parseFlags(['list','--json','--page','2'])
+  returns {flags:{json:true,page:"2"},positional:["list"]}. `node --test` still 0 fail.
 
-### What Next
-- `api.js` still snapshots `BASE_URL` at module load time — will need dynamic resolution per plan Phase 1
-- Login and init commands need `--sandbox`/`--production`/`--env` flag handling to call `setRuntimeEndpoint()`
+## task-003 — Util tests (checkResp, readData, maybeJson)
+- Added test/util.test.js: 19 tests, describe/test blocks, node:assert/strict. Full suite now 20.
+- IMPORTANT: task description mis-described readData/maybeJson (claimed JSON-parse/raw-fallback
+  semantics). Tested ACTUAL src/util.js behavior instead:
+  * checkResp(res): 2xx → returns undefined; else throws Error w/ .status + .body. Message =
+    `API ${status} — ${msg}`, msg = body.messages || body.message || res.raw || ''. Boundary
+    cases covered (199 throws, 200/299 pass, 300 throws).
+  * readData(value): falsy → undefined; '@'-prefix → fs.readFileSync + JSON.parse; else JSON.parse.
+    @file branch tested with a REAL temp file (mkdtemp/writeFile/rm in finally) — mock-free.
+  * maybeJson(flags, body, fallback): flags.json → ui.jsonOut(body) (writes JSON+\n to stdout),
+    return true; else fn fallback → call+true; else false. Non-function fallback → false.
+- maybeJson writes to stdout via ui.jsonOut; captured (not stubbed) with helpers.captureOutput()
+  to both assert output and keep test logs clean. cap.restore() in finally.
+- The skill 'library/testing/unit-testing-patterns' has NO SKILL.md on disk — followed existing
+  helpers.js conventions instead.
 
----
+## task-004 — CLI parse tests (parseFlags)
+- Added test/cli.test.js: 20 tests across 6 describe blocks; full suite now 43. parseFlags is
+  pure (no I/O, no process.exit), so each case is a direct call + deepEqual on {flags, positional}.
+  No helpers needed.
+- IMPORTANT: task desc said "short flags (-f value)" but src/cli.js has NO generic short-flag
+  handling. Only short flags are -h/-v (booleans). An unknown short token like '-f' doesn't start
+  with '--', so it falls through to the positional branch — '-f' AND its 'value' both become
+  positionals. Tested ACTUAL behavior (covered -h/-v booleans + the -f fall-through case).
+- Covered each documented style: --flag value (apiKey/page/pageSize/page-size alias/data + unknown
+  long flag consuming next token), --key=value (incl. '=' in value, empty value), boolean (--json
+  /--force), short (-h/-v), positionals (incl. '--' terminator pushing remainder verbatim), and
+  mixed-order combos (incl. last-wins overwrite, missing trailing value → undefined).
 
-## Session 2026-07-20 — task-002: Dynamic base URL + flag parsing
+## task-005 — Config round-trip tests (temp XDG_CONFIG_HOME)
+- Added test/config.test.js: 12 tests across 3 describe blocks; full suite now 55.
+- CRITICAL gotcha: src/config.js freezes BOTH paths at module load:
+  * XDG path from XDG_CONFIG_HOME (line 5) — isolated via helpers.tempConfigHome().
+  * legacy path from os.homedir() i.e. $HOME (line 9) — NOT covered by tempConfigHome.
+    To safely test the legacy ~/.mayar migration without touching the real home,
+    ALSO set process.env.HOME to a second temp dir BEFORE require('../src/config').
+    (os.homedir() honors $HOME on POSIX.) Restore/rm both in an after() hook.
+- Covered: path-location sanity (file/dir under temp XDG), load null when empty,
+  save→load round-trip, on-disk persistence, overwrite, pretty 2-space JSON,
+  clear→true+removes / clear→false when absent, malformed JSON → load() null,
+  legacy migration (copies to XDG, removes legacyFile+legacyDir, returns data),
+  XDG-precedence (no migration when XDG file exists), null when neither exists.
+- node --test spawns a separate child process per test file, so the global
+  HOME/XDG env mutation in config.test.js does not leak into other test files.
+- Verified post-run: no /root/.config/mayar and no /root/.mayar created.
 
-### Completed
-- Removed module-level `const BASE_URL` from `api.js`; `request()` now calls `config.apiBaseUrl()` on every invocation, resolving the environment dynamically
-- Removed `BASE_URL` from module exports (was only used internally and in tests)
-- Added `--sandbox` and `--production` boolean flags to `parseFlags()`
-- Added `--env <value>` explicit flag handler to `parseFlags()` (generic `--key=value` handler already catches `--env=value` inline form)
-- Added endpoint resolution block in `run()`: validates mutual exclusivity of sandbox/production, validates --env values, calls `config.setRuntimeEndpoint()` with the resolved value or null
-- Changed `ensureKey()` auto-prompt to use `config.resolveEndpoint()` instead of hardcoded `'production'` so it respects flag/saved endpoint
-- Updated HELP text: added `--sandbox`, `--production`, `--env` to Global flags; revised Environment section with new resolution order
-- All 69 existing tests pass (cli, config, ui, util) — no regressions
+## task-006 — UI tests (table() + color wrappers, non-TTY)
+- Added test/ui.test.js: 15 tests across 4 describe blocks; full suite now 70, 0 fail.
+- KEY: src/ui.js freezes `isTTY = !!process.stdout.isTTY` at MODULE LOAD (line 3), so
+  behavior is fixed the instant you require('../src/ui'). node --test runs non-TTY
+  (process.stdout.isTTY === undefined) → wrappers return String(s) plain, no ANSI.
+- Robustness: gate the non-TTY assertions with `const skip = NON_TTY ? false : 'msg'`
+  passed as node:test's per-test `{ skip }` option, so the suite stays green even if
+  ever run under a TTY. captureOutput() patches .write, NOT .isTTY, so the frozen
+  value (and thus plain output) is unaffected by capturing.
+- Color wrappers (dim/bold/red/green/yellow/cyan/magenta) coerce via String(): red(42)
+  ==='42', dim(null)==='null', etc. Asserted no /\x1b\[/ in any output.
+- table() layout math (verified exactly): width = min(48, max(colNameLen, ...cellLens));
+  columns joined with a 2-space gutter; cells padEnd(width). Empty/null/undefined rows
+  → dim('(no rows)')+'\n' (plain in non-TTY). Cells use `r[col] ?? ''` so 0 is kept
+  but null/undefined/missing → ''. Values longer than width → slice(0,width-1)+'…';
+  width cap 48 means a 50-char value renders as 47×'x'+'…' (48 display chars).
 
-### Key Decisions
-- `--env=sandbox` (inline form) is handled by the existing generic `--key=value` handler, no explicit code needed
-- `--env` without `=` is handled explicitly to ensure the next arg is consumed as the value
-- Endpoint resolution happens *before* other run logic (version, help, command dispatch) so the endpoint is set for all commands
-- Case-insensitive validation for `--env` values (`.toLowerCase()`) for user-friendliness
+## task-007 — Wire-up pre-commit hook + document coverage reality
+- pre_commit hook (.jonggrang/jonggrang.json) changed from "echo 'no test command
+  configured'" → "node --test". The full suite (70 tests, 0 fail) now gates every commit.
+  Used bare `node --test` (not `npm test`) to match the task spec and avoid an npm subshell;
+  it picks up every test/*.test.js the same way the "test" npm script does.
+- NOTE: both files this task touches live under .jonggrang/ (jonggrang state), which is
+  intentionally kept OUT of the feature branch (recent commits only carry test/ + src/cli.js).
+  So this task produces NO git commit — the changes are state-only and stay in the working tree.
 
----
+### Coverage reality (the 80% threshold gap)
+- testing.coverage_threshold in jonggrang.json is 80, and this first pass DOES NOT meet it.
+  This is intentional, not a miss. The suite deliberately scopes to pure / near-pure functions
+  that need no mocking: util.* (checkResp/readData/maybeJson), cli.parseFlags, config round-trip
+  (temp XDG_CONFIG_HOME + HOME), and ui.table()/color wrappers (non-TTY). These are the parts
+  that can be tested mock-free with high signal and zero flakiness.
+- UNCOVERED by design: src/commands/* (each command wires api + ui together), the interactive /
+  process.exit paths (ensureKey, ui.ask, ui.askSecret), the HTTP layer in src/api.js, and the
+  top-level run() dispatch in src/cli.js. Covering these honestly requires either dependency
+  seams the CommonJS code doesn't have yet, or a live transport — both deferred (see below).
+- Decision rationale: forcing 80% now would mean brittle require.cache surgery / monkey-patching
+  to fake api + ui, producing tests that assert "the mock was called" rather than real behavior —
+  false confidence + a large maintenance surface. We chose honest, durable coverage over a
+  green threshold number. The threshold stays at 80 as the documented target for the next layers.
 
-## Session 2026-07-20 — task-003: Interactive environment selection for mayar login
+### Follow-up layers (to close the gap, in rough ROI order)
+1. Command-level tests with mocking: introduce a dependency seam (e.g. export commands as
+   factories taking {api, ui}, or a small injectable module registry) so src/commands/* can run
+   against fake api/ui. This is the biggest coverage lever; it needs a (behavior-preserving)
+   refactor for DI, so it was kept out of this pass's files array.
+2. Local HTTP integration tests: use test/helpers.js startServer() (already built — http on
+   port 0, returns {url,port,close}) with MAYAR_API_URL/BASE_URL pointed at it (set BEFORE
+   require, since api.js freezes BASE_URL at load) to exercise checkResp + the real fetch path
+   end-to-end without external network. Slower/flakier than unit tests, so a second layer, not
+   the foundation.
+3. Interactive-path coverage: ensureKey / ui.ask / ui.askSecret call process.exit and drive raw
+   stdin; testing them needs either extraction of the testable core or a child-process harness
+   that feeds stdin and asserts exit codes. Lowest ROI, do last.
 
-### Completed
-- Added interactive TTY prompt in `src/commands/login.js` after `ui.printBanner()`:
-  - Only triggers when: not `--json`, no `--sandbox`/`--production`/`--env` flags, `stdin.isTTY`, no stored `endpoint` in config, and `resolveEndpoint()` returns 'production' (i.e., NODE_ENV isn't 'development')
-  - Shows "Select environment" with [1] Production / [2] Sandbox options
-  - Uses `ui.ask('Choose [1]: ')` with default to '1' (production) on empty input
-  - Maps '2'/'sandbox' → sandbox, everything else → production
-  - Calls `config.setRuntimeEndpoint()` with the chosen value
-- Moved `authUrl` computation to after the prompt so `MayarAuth` SDK gets the correct URL
-- Added endpoint display line: `Endpoint: production|sandbox` after the auth server line
-- Added `endpoint: config.resolveEndpoint()` to the top-level of saved config alongside `auth`
-- Added `endpoint` field to JSON output (`ui.jsonOut()`)
-- All 70 existing tests pass — no regressions
+## task-001 (login-env-and-skill-install) — Add pickFromList() to src/ui.js
+- Added async pickFromList(items, { displayKey, descriptionKey }) to src/ui.js.
+- Renders numbered list (1-indexed) with display values from displayKey; optional
+  descriptionKey renders descriptions indented 3 spaces in dim below each item.
+- Empty items array: prints dim('(no items)') and returns null immediately.
+- Prompt loop: calls ask('Pick a number (or q to quit): ') — same readline pattern as
+  existing ask(). On 'q'/'Q' → null. On numeric input: parseInt trimmed string, reject
+  NaN or partial-match ("12abc") with dim message, reject out-of-range (1-N). Returns
+  the selected item on valid input.
+- PATTERN: displayKey lookup uses `item[displayKey] ?? ''` to safely handle missing keys
+  (same ?? pattern as table()'s cell access).
+- PATTERN: error messages use dim() for visual consistency with the existing ui style.
+- GOTCHA: pickFromList is async and interacts with stdin, making it harder to test
+  without mocking ask() or feeding stdin. Not yet covered by the test suite — fits
+  the "interactive-path coverage" bucket in the follow-up layers above.
+- Full test suite still passes: 70 tests, 0 fail.
+- Added to module.exports alongside existing exports (printBanner, ask, askSecret,
+  jsonOut, table, and color wrappers).
 
-### Key Decisions
-- Prompt only when truly no preference exists: checks flags, TTY, stored endpoint, and NODE_ENV before prompting. A stored `endpoint` (even 'production') suppresses the prompt.
-- `setRuntimeEndpoint()` is called inside login.js (even though cli.js already calls it) because the user's selection needs to override the null set by cli.js. The priority chain in config handles this correctly.
-- Empty/invalid input defaults to production — safest default for new users.
+## task-002 — Create docs command module: llms.txt fetch, parse, and cache infrastructure
+- Created src/commands/docs.js with 7 infrastructure functions + run() entry point.
+- Functions implemented:
+  * getCacheDir() — returns config.dir/cache, creates with mkdirSync(mode 0o700).
+  * getCachedLLMsTxt() — reads llms.txt + llms-meta.json, checks 24h TTL, returns text or null.
+  * readStaleCache() (internal) — reads cached llms.txt ignoring TTL for stale-fallback.
+  * fetchLLMsTxt() — https.get with 10s timeout (req.setTimeout), follows 301/302 up to 3 hops,
+    User-Agent: mayar-cli/<version>, writes cache files on success, throws on failure.
+  * fetchOrGetLLMsTxt(refresh) — orchestrates cache/fetch; refresh=true skips cache entirely;
+    on fetch failure: stale cache → dim warning + return stale; no cache → throw with
+    "Visit https://docs.mayar.id for manual browsing" message.
+  * parseTitleUrl(line) — regex /^-\s+\[([^\]]+)\]\(([^)]+)\)/ extracts {title, url} or null.
+  * slugify(title) — lowercase, replace [^a-z0-9]+ with '-', trim leading/trailing dashes.
+  * parseLLMsTxt(raw) — splits by newline, identifies ## sections, parses list items into
+    {sections: [{name, topics: [{slug, title, url, description, section}]}]}, skips empty sections.
+  * run(ctx) — CLI entry for mayar docs: fetches+parses llms.txt, supports --refresh, --json,
+    keyword topic search (case-insensitive matching title/slug/description), TTY interactive
+    pickFromList, non-TTY plain listing. No API key required (handled as special case in cli.js).
+- Updated src/cli.js:
+  * Added --refresh boolean flag to parseFlags().
+  * Added docs command routing before ensureKey() block (like init/login, no auth needed).
+  * Added "Documentation" section to HELP() text with docs [topic] [--json] [--refresh].
+- All 70 existing tests pass (0 fail).
+- GOTCHA: docs command intentionally bypasses ensureKey() — documentation browsing is public
+  and should not require authentication. Added as a special case alongside init/login in cli.js.
+- PATTERN: fetch functions follow the same redirect-following pattern as skill.js (doFetch
+  recursion, redirect counter, URL resolution via new URL(relative, base).href). Timeout uses
+  req.setTimeout() (Node 18+ compatible) rather than options.timeout for broader compat.
+- PATTERN: cache writes are wrapped in try/catch — non-fatal, data is still returned to caller
+  even if cache dir is unwritable (e.g., permissions).
 
-### What Next
-- task-004: Mirror environment selection into `mayar init`
-- task-005+: `mayar skill install` command
+## task-003 — Add content fetcher and HTML renderer to docs command
+- Added fetchPageContent(url) to src/commands/docs.js:
+  * Uses https.get with User-Agent 'mayar-cli/<version>' header.
+  * 10-second timeout via req.setTimeout(); on timeout, req.destroy() + reject with
+    'Request timed out'.
+  * Follows redirects (301/302/307/308) via Location header, up to 3 hops; throws
+    'Too many redirects' on limit.
+  * Resolves with UTF-8 body on any 2xx; rejects with 'HTTP <code>' on non-2xx.
+  * Same doFetch recursion pattern as fetchLLMsTxt, but accepts 2xx range instead
+    of just 200, and handles 307/308 in addition to 301/302.
+- Added renderContent(html) to src/commands/docs.js:
+  * (a) Extraction: tries <main>, then <article>, then <div class="*content*">,
+    then <body>, then raw html — all via regex + case-insensitive flags.
+  * (b) Tag stripping: replace(/<[^>]*>/g, '').
+  * (c) Entity decoding: single-pass replace with callback — decodes &amp; &lt;
+    &gt; &quot; &#39; &nbsp; &#x2F;. Single-pass avoids ordering issues (e.g.,
+    &amp;lt; → &lt; → < if done sequentially).
+  * (d) Collapses 3+ consecutive newlines into 2.
+  * (e) Trims leading/trailing whitespace per line.
+  * (f) Terminal formatting: markdown headings (^#{1,6}\s) → ui.bold(); code
+    fences (```) toggle indentation, content inside gets 2-space prefix; horizontal
+    rules (--- or *** exactly) → ui.dim('─'×40). Returns formatted string — does
+    NOT print directly (caller decides output).
+- PATTERN: entity decoding uses a single regex with a map callback to avoid the
+  &amp; → & → re-decode pitfall that would occur with chained .replace() calls.
+- PATTERN: renderContent is pure (string in, string out) — no I/O, no process writes.
+  Makes it trivially testable without mocking.
+- Both functions added to module.exports alongside existing exports.
 
----
+## task-004 — Implement docs command UX: interactive, keyword, non-TTY, and topic resolution
+- Rewrote the run() function with 6 distinct UX paths:
+  * (1) Fetch+parse flow: build flat allTopics[] from all sections' topics for unified lookup.
+  * (2) Topic resolution (keyword given): slugify(input) → filter where inputSlug is substring
+    of topic slug OR input is case-insensitive substring of topic title (description excluded).
+  * (3a) Single match: fetchPageContent(url), renderContent(html), print header in format
+    ui.bold(title) + ' — ' + ui.cyan(url), print rendered content, footer ui.dim('───').
+    fetch failures are caught gracefully with dim('could not fetch page content').
+  * (3b) Multiple matches: numbered list (1-indexed) with title, section in dim, and
+    description indented on next line.
+  * (3c) No match: 'No documentation found for "<input>"' + fuzzy 'Did you mean?' suggestion.
+    similarityScore(input, title): prefix match bonus (+100) + ordered shared character count.
+    Takes top 3 by score (filtering out zero-scorers).
+  * (4) No-arg TTY: section headers as ui.bold(sec.name), then pickFromList(allTopics, ...).
+    If selected → fetchPageContent + renderContent; if null (quit) → exit silently.
+  * (5) No-arg non-TTY: '## SectionName' headers, '  - Title — description' entries.
+  * (6) JSON mode: minimal stub preserved for task-006 to enhance.
+- Added similarityScore() function — exported alongside existing exports.
+- PATTERN: topic resolution uses slugify() on the input keyword and checks slug.includes()
+  rather than direct contains on the raw input, which makes 'create-invoice' match topics
+  like 'create-invoice-link' even if the user typed 'create-invoice'.
+- PATTERN: all output uses process.stdout.write (not console.log) per task spec.
+- GOTCHA: the similarityScore shared-character-count uses ordered matching (characters from
+  input appearing in sequence in the title), not a simple character-set intersection. This
+  gives 'invoic' a score of 6 against 'Create Invoice' (i-n-v-o-i-c found in order) and
+  'xyz' a score of 0. This is more robust than a simple intersection for typo detection.
+- Full test suite: 70 tests, 0 fail (unchanged — interactive/network paths untested by design).
 
-## Session 2026-07-20 — task-004: Add interactive environment selection to mayar init
+## task-005 — Register docs command in CLI, add help text, and parse --refresh flag
+- Most of the three changes described in the task were already done by task-002:
+  * parseFlags() already had `else if (a === '--refresh') flags.refresh = true;`
+  * HELP() already had the Documentation section with `docs [topic] [--json] [--refresh]`
+  * run() already had `if (cmd === 'docs')` explicit routing before ensureKey()
+- Two items remained: (a) `--refresh` was missing from the Global flags section of HELP();
+  (b) `docs` was missing from the handlers map (the explicit `if` check handled it instead).
+- Added `--refresh` flag description after `--data` line in the Global flags section.
+- Added `docs: './commands/docs'` to handlers map (alphabetically after `discounts`).
+  This is technically unreachable for docs (the explicit `if` catches it first), but serves
+  as documentation/completeness. If future refactoring normalizes all commands through the
+  handlers map, the entry is already in place.
+- GOTCHA: task description was written before task-002 implemented these changes, so
+  task-005 became a delta rather than a full implementation. Always re-read the current
+  source before starting a task — don't assume the preconditions from the task description
+  still hold.
+- Full test suite: 70 tests, 0 fail (no new tests — this was a wiring-only change).
 
-### Completed
-- Added interactive TTY prompt in `src/commands/init.js` after API key check/overwrite logic:
-  - Only triggers when: no `--sandbox`/`--production`/`--env` flags AND `stdin.isTTY`
-  - Shows "Select environment" with [1] Production / [2] Sandbox options
-  - Uses `ui.ask('Choose [1]: ')` with default to '1' (production) on empty input
-  - Maps '2'/'sandbox' → sandbox, everything else → production
-  - Calls `config.setRuntimeEndpoint()` with the chosen value
-- Welcome message URL is now dynamic: `https://web.mayar.club` for sandbox, `https://web.mayar.id` for production
-- `config.save()` now uses `config.resolveEndpoint()` instead of hardcoded `'production'`
-- Added endpoint display line: `${ui.dim('Endpoint:')} ${endpoint}` after the "Saved" line
-- All 70 existing tests pass — no regressions
-
-### Key Decisions
-- Unlike login.js, init.js does NOT check for stored endpoint or NODE_ENV before prompting — the task spec only requires checking flags and isTTY. This is appropriate because init is a setup command that should always offer the choice when interactive.
-- The prompt placement (after overwrite check, before welcome message) ensures the welcome message URL is correct.
-- `config.setRuntimeEndpoint()` is called inside init.js (even though cli.js already calls it) because the user's selection overrides the null set by cli.js.
-
-### What Next
-- task-005+: `mayar skill install` command
-
----
-
-## Session 2026-07-20 — task-005: Create src/commands/skill.js
-
-### Completed
-- Created `src/commands/skill.js` with `run(ctx)` export matching project convention
-- Parses subcommand from positional[0]; 'install' triggers action, no subcommand/'help' shows usage, unknown errors with exit(1)
-- Fetches SKILL.md from `https://raw.githubusercontent.com/mayarid/mayar-cli/refs/heads/main/SKILL.md` via `https.get`
-- Follows 301/302 redirects up to 3 hops with proper `res.resume()` on redirected responses
-- Defines 5 target paths: `.agents/skills/mayar/SKILL.md`, `.claude/skills/mayar/SKILL.md`, `.opencode/skills/mayar/SKILL.md`, `.codex/skills/mayar/SKILL.md`, `.cursor/rules/mayar.mdc`
-- `--target` flag (default 'all') filters to specific agent; validates against: all, agents, claude, opencode, codex, cursor
-- Creates parent dirs with `fs.mkdirSync({recursive:true})`
-- Skips existing files unless `--force` is set; prints skip message mentioning `--force`
-- `--json` outputs JSON array of `{target, path, status}` with status 'installed' or 'skipped'
-- Uses only Node.js built-ins: `https`, `fs`, `path` + project-internal `ui` module for formatting
-- All 70 existing tests continue to pass (no regressions)
-
-### Key Decisions
-- Cursor target (`.cursor/rules/mayar.mdc`) is included in the install loop with raw SKILL.md content; task-006 will add `.mdc` frontmatter adaptation
-- Redirect-following uses internal `doFetch` closure to avoid recursion pollution; `new URL(res.headers.location, url)` handles relative redirects
-- `--target` flag is parsed by cli.js's generic `--key=value` handler (no explicit handler needed in parseFlags)
-- Error messages go to stderr with `ui.red()` for consistency; usage/install messages go to stdout
-
-### What Next
-- task-006: CLI registration in cli.js (add `skill` to handlers map), HELP text update, Cursor `.mdc` adaptation with YAML frontmatter
-
----
-
-## Session 2026-07-20 — task-006: Cursor .mdc adaptation
-
-### Completed
-- Added `generateCursorMdc(skillContent)` function in `src/commands/skill.js`:
-  - Strips original SKILL.md YAML frontmatter by finding `---` on line 0 and closing `---` on a subsequent line, then slicing the body from after that
-  - If no frontmatter detected (line 0 isn't `---`), preserves raw content as-is
-  - Prepends Cursor .mdc frontmatter with `alwaysApply: true`, `description`, `globs: ["**/*"]`
-- Modified install loop to branch on `t === 'cursor'`:
-  - Uses `generateCursorMdc(content)` for file content instead of raw SKILL.md
-  - Prints "Installed (Cursor .mdc): .cursor/rules/mayar.mdc" label for cursor target
-  - All other targets continue using raw SKILL.md content
-- Force/skip logic unchanged — works identically for all targets including cursor
-- Verified output: exactly 2 `^---$` YAML delimiters (no nesting), Cursor frontmatter keys present, original SKILL.md frontmatter keys absent, body content intact
-- All 70 existing tests pass — no regressions
-
-### Key Decisions
-- `generateCursorMdc` is a module-private function (not exported) — only used internally by the install loop
-- YAML frontmatter stripping uses `lines[i].trim() === '---'` to match delimiter lines — `trim()` handles potential trailing whitespace/carriage returns
-- Frontmatter is always trimmed from body, then body is re-trimmed at the end — ensures clean output without leading/trailing whitespace
-- The `--target agents` case naturally excludes cursor since the targets array is `['agents']` only
-
-### What Next
-- task-007: Register `skill` command in cli.js handlers map + update HELP text
-
----
-
-## Session 2026-07-20 — task-007: Register skill command in cli.js + update HELP
-
-### Completed
-- Added `skill: './commands/skill'` to the handlers map in `src/cli.js`
-- Added "Agent Skills" section to HELP text showing `skill install` usage with `--target` and `--force` flags
-- Verified Global flags section already includes `--sandbox`, `--production`, `--env` (added in task-002)
-- Verified Environment section already shows correct resolution order (added in task-002)
-- All 70 existing tests pass — no regressions
-- Smoke-verified all acceptance criteria: `mayar skill install` runs, `mayar -h` shows new section, unknown `skillx` errors, skill routing works
-
-### Key Decisions
-- Agent Skills section placed right after Setup, before Account — matches the logical grouping of setup-time commands
-- No change to `--env` HELP text format (uses `<value>` not `<sandbox|production>`, already functionally clear)
-- Did not modify `ensureKey()` behavior — skill command now requires API key authentication via the same guard as all other commands in the handlers map
-
-### What Next
-- Feature complete — all 7 tasks done
+## task-006 — Implement --json output mode for docs command
+- Replaced the minimal JSON stub in run() with full four-case implementation:
+  * (1) No topic: ui.jsonOut({ topics: [{ slug, title, url, description, section }] }), return.
+  * (2) Single match: fetchPageContent + renderContent, ui.jsonOut({ topic, title, url, content }), return.
+  * (3) Multi-match: ui.jsonOut({ matches: [{ topic: slug, title, url, description }] }), return — no prompt.
+  * (4) No match: ui.jsonOut({ error: 'No documentation found for "<input>"', suggestions: [top3Slugs] }),
+    process.exitCode = 1, return — no process.exit().
+- Fixed stale cache warning to use process.stderr.write instead of process.stdout.write,
+  so it doesn't pollute JSON stdout output.
+- Fixed outer fetch error handler: JSON mode now sets process.exitCode = 1 and returns
+  instead of calling process.exit(1), which would hide the JSON error output.
+- JSON path topic matching uses the same logic as the non-JSON path: slugify(input) →
+  slug.includes() + title.toLowerCase().includes().
+- Zero-match suggestions use similarityScore() (same fuzzy matching as non-JSON) and
+  emit only the slug strings (not full objects).
+- Page fetch failures in single-match JSON path are caught and output as ui.jsonOut
+  error with exitCode = 1.
+- PATTERN: JSON mode short-circuits ALL interactive and plain-text output paths — only
+  ui.jsonOut() writes to stdout. All four cases end with an explicit return.
+- Full test suite: 70 tests, 0 fail (no new tests — JSON path is network-dependent).

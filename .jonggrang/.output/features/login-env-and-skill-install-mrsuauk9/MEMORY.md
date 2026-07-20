@@ -1,54 +1,206 @@
 ---
 feature_id: login-env-and-skill-install-mrsuauk9
 feature_name: login-env-and-skill-install-mrsuauk9
-tags: [environment-selection, skill-install, cli-routing, config-refactor, agent-integration]
-updated_at: 2026-07-20T09:25:58.444Z
+tags: [docs, cli, ui, caching, html-rendering]
+updated_at: 2026-07-20T11:02:27.435Z
 ---
 
 ## Context
-This feature delivered two independent workstreams for the mayar-cli:
 
-1. **Environment-aware configuration** — runtime endpoint resolution (sandbox vs production) with CLI flags, interactive TTY prompts, and NODE_ENV awareness, applied to `login` and `init` commands.
-2. **`mayar skill install` command** — fetches SKILL.md from the mayar-cli GitHub repo and installs it into 5 AI agent directories (Agents, Claude, OpenCode, Codex, Cursor), with Cursor receiving an adapted `.mdc` format including YAML frontmatter.
+This feature adds a `mayar docs` command that fetches, caches, and parses
+`llms.txt` from `docs.mayar.id`, supports interactive and non-interactive topic
+browsing, fetches and renders full HTML documentation pages in the terminal, and
+provides a machine-readable `--json` output mode. The feature also adds a
+`pickFromList()` interactive selection helper to `src/ui.js` that the docs
+command (and future commands) can reuse.
 
-All 7 tasks completed. Zero test regressions (70 tests pass throughout). See [task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json) through [task-007](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json) and the [progress](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/progress.txt) log.
+All work tracked under [login-env-and-skill-install-mrsuauk9](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/);
+raw notes in [progress](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/progress.txt).
 
 ## Facts
-- **Config refactor** ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Added `_runtimeEndpoint` module-level variable, `setRuntimeEndpoint()` (validates `'sandbox'`/`'production'`/`null`, throws on invalid), and `resolveEndpoint()` with priority chain: runtime override → `NODE_ENV === 'development'` → stored config → `'production'` default. `apiBaseUrl()` and `authBaseUrl()` use `resolveEndpoint()`. `isDev()` delegates to `resolveEndpoint() === 'sandbox'` for backward compat.
-- **Dynamic API base URL** ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Removed module-level `const BASE_URL` from `api.js`; `request()` now calls `config.apiBaseUrl()` on every invocation. Env vars `MAYAR_API_URL`/`MAYAR_AUTH_URL` retain absolute precedence. `ensureKey()` auto-prompt uses `config.resolveEndpoint()` instead of hardcoded `'production'`.
-- **CLI flag parsing** ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): `parseFlags()` handles `--sandbox`, `--production`, `--env <value>` (inline `--env=value` caught by existing generic handler). Mutual exclusivity of sandbox/production validated with error+exit. Invalid `--env` values error. Resolution happens before command dispatch.
-- **Login interactive prompt** ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): TTY prompt triggers only when no flags, `stdin.isTTY`, no stored `endpoint`, and `NODE_ENV !== 'development'`. Shows [1] Production / [2] Sandbox, defaults to production. Saves `endpoint` field to config alongside auth. `MayarAuth` SDK init moved after prompt. Endpoint shown in display and JSON output.
-- **Init interactive prompt** ([task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): TTY prompt triggers on no flags + `stdin.isTTY` (no stored endpoint or NODE_ENV guard — init always offers choice when interactive). Welcome message URL is dynamic (`web.mayar.club` vs `web.mayar.id`). Config save uses `config.resolveEndpoint()`.
-- **Skill command** ([task-005](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json), [task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): `src/commands/skill.js` exports `run(ctx)`. Fetches SKILL.md from `https://raw.githubusercontent.com/mayarid/mayar-cli/refs/heads/main/SKILL.md` via `https.get`, follows 301/302 redirects up to 3 hops. Installs to `.agents/skills/mayar/SKILL.md`, `.claude/skills/mayar/SKILL.md`, `.opencode/skills/mayar/SKILL.md`, `.codex/skills/mayar/SKILL.md`, and `.cursor/rules/mayar.mdc`. `--target` flag filters (all, agents, claude, opencode, codex, cursor). `--force` overwrites; otherwise skips existing files. `--json` outputs machine-readable array.
-- **Cursor .mdc adaptation** ([task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): `generateCursorMdc()` strips SKILL.md's own YAML frontmatter (lines between first and second `---`), prepends Cursor frontmatter with `alwaysApply: true`, `description`, and `globs: ["**/*"]`. No nested `---` delimiters. Force/skip logic unchanged.
-- **CLI registration** ([task-007](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): `skill: './commands/skill'` added to handlers map. "Agent Skills" HELP section shows `skill install` usage with `--target` and `--force`. Global flags and Environment sections already correct from task-002.
+
+- **Project**: mayar-cli (Node.js / TypeScript-idiom CommonJS, zero external
+  deps beyond Node builtins).
+- **Test suite**: 70 tests, 0 failures across `test/{helpers,util,cli,config,ui}.test.js`.
+  The suite gates every commit via `node --test` in the pre-commit hook.
+  The 70 tests deliberately cover only pure / near-pure functions; interactive
+  paths, HTTP calls, and `run()` dispatch are deferred (see Lessons).
+- **UI conventions**: `src/ui.js` freezes `isTTY` at module load; `dim()`,
+  `bold()`, `red()`, `green()`, `yellow()`, `cyan()`, `magenta()` all coerce
+  via `String()`. `table()` uses width-cap 48, `??` for missing cells, and
+  `slice(0,width-1)+'…'` truncation.
+- **Config conventions**: `src/config.js` freezes both XDG (`XDG_CONFIG_HOME`)
+  and legacy (`$HOME`) paths at module load. Tests for config must set both
+  env vars *before* `require('../src/config')`.
+- **CLI conventions**: `src/cli.js` exports `{ run, parseFlags }`.
+  `parseFlags` is pure; no generic short-flag handling exists (only `-h`/`-v`
+  are recognized as short booleans; unknown short tokens fall through to
+  positionals). `run()` dispatches commands via a handlers map + a few
+  special-case `if` blocks (`init`, `login`, `docs`) that bypass `ensureKey()`.
 
 ## What Done & Why
-1. **Config refactor** ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Introduced runtime endpoint override with strict validation and a unified resolution chain. This is the foundation — all subsequent tasks depend on it for environment-aware URL resolution.
-2. **Dynamic base URL + flag parsing** ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Removed the static `BASE_URL` snapshot in `api.js` so every request resolves the environment dynamically. Added `--sandbox`, `--production`, and `--env` flags so users can explicitly choose environments from the CLI.
-3. **Login interactive prompt** ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Users without flags or stored preferences get a friendly TTY prompt during login. Saves the chosen endpoint so subsequent commands remember the choice. The guard conditions (flags, TTY, stored endpoint, NODE_ENV) ensure the prompt only shows when truly needed.
-4. **Init interactive prompt** ([task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Same pattern for `mayar init` — first-time setup should always offer the choice. Deliberately simpler guards (no stored endpoint or NODE_ENV check) because init is a setup command.
-5. **Skill install command** ([task-005](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): New command to distribute SKILL.md into AI agent directories. Uses only Node.js built-ins. Redirect-following with internal closure avoids recursion pollution. `--force`/skip logic handles re-runs gracefully.
-6. **Cursor .mdc adaptation** ([task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Cursor uses `.mdc` format requiring YAML frontmatter. The `generateCursorMdc()` function strips the original SKILL.md frontmatter (avoiding nested `---` delimiters) and prepends Cursor-compatible frontmatter. Only `--target cursor` or `--target all` triggers this path.
-7. **CLI registration + HELP** ([task-007](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)): Wired the skill command into the CLI routing and documented it in HELP. This is the final integration step — without it the skill command exists but is unreachable.
+
+1. **`pickFromList()` interactive helper** ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)) —
+   Added async `pickFromList(items, { displayKey, descriptionKey })` to
+   `src/ui.js`. Renders a 1-indexed numbered list, prompts `Pick a number (or
+   q to quit): ` in a loop (rejects NaN, partial-match like `"12abc"`, and
+   out-of-range), returns the selected item or `null` on `q`/`Q`. Empty input
+   → `dim('(no items)')` → `null`. Why: needed a reusable interactive
+   selection primitive for the docs command and any future picker UX.
+
+2. **Docs command infrastructure** ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)) —
+   Created `src/commands/docs.js` with: `getCacheDir()`, `getCachedLLMsTxt()`
+   (24h TTL via `llms-meta.json`), `readStaleCache()`, `fetchLLMsTxt()`
+   (`https.get`, 10s timeout, follows 301/302 up to 3 hops, writes cache),
+   `fetchOrGetLLMsTxt(refresh)` (orchestrates cache/fetch with stale-fallback),
+   `parseTitleUrl(line)` (regex on `- [Title](URL)`), `slugify(title)`
+   (lowercase, replace `[^a-z0-9]+` with `-`, trim dashes), `parseLLMsTxt(raw)`
+   (splits by `##` sections, parses list items into `{ sections: [{ name,
+   topics: [{slug,title,url,description,section}] }] }`). Wired `docs` into
+   `src/cli.js` (routing before `ensureKey()`, `--refresh` flag, help text).
+   Why: documentation browsing is public and should not require an API key.
+
+3. **Content fetcher + HTML renderer** ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)) —
+   Added `fetchPageContent(url)` (follows 301/302/307/308, accepts all 2xx,
+   10s timeout) and `renderContent(html)` — extracts `<main>` → `<article>` →
+   `<div class="*content*">` → `<body>` → raw via regex; strips tags; decodes
+   HTML entities in a single pass (avoiding `&amp;` → `&` → re-decode);
+   collapses 3+ blank lines to 2; trims per-line whitespace; applies terminal
+   formatting (markdown headings → `bold()`, code fences → 2-space indent,
+   horizontal rules → `dim('─'×40)`). `renderContent` is pure (string →
+   string) — trivially testable.
+
+4. **Docs command UX** ([task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)) —
+   Rewrote `run()` with 6 UX paths: (1) fetch+parse → flat `allTopics[]`;
+   (2) topic resolution via `slugify(input)` → `slug.includes()` +
+   `title.toLowerCase().includes()`; (3a) single match → fetch page + render
+   content + header/footer; (3b) multi-match → numbered list with title,
+   section, description; (3c) no match → error + `similarityScore()` fuzzy
+   "Did you mean?" (prefix bonus + ordered shared-character count, top 3);
+   (4) TTY no-arg → section headers + `pickFromList()`; (5) non-TTY no-arg →
+   plain `## SectionName` / `  - Title — description` listing; (6) `--json`
+   stub. All output via `process.stdout.write`.
+
+5. **CLI registration + help + `--refresh`** ([task-005](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)) —
+   Most wiring was already done by task-002. Delta: added `--refresh` to the
+   Global flags help section; added `docs: './commands/docs'` to the handlers
+   map (unreachable due to the explicit `if` check, but serves as documentation
+   and future-proofing).
+
+6. **`--json` output mode** ([task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)) —
+   Four JSON cases: (1) no topic → `{ topics: [...] }`; (2) single match →
+   fetch page + render → `{ topic, title, url, content }`; (3) multi-match →
+   `{ matches: [...] }` (no prompt); (4) no match → `{ error, suggestions }`
+   + `process.exitCode = 1` (no `process.exit()`). Stale-cache warnings go to
+   `process.stderr.write`. JSON mode short-circuits all interactive/plain-text
+   paths.
 
 ## Lessons Learned
-- **Two touchpoints for new commands**: Adding a command to mayar-cli requires changes in two places in `cli.js` — the `handlers` map (routing) and the `HELP()` function (documentation). Missing either results in an unreachable or undocumented command ([task-007](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **HELP text can silently drift**: Global flags and environment docs in HELP were already correct from task-002 but required explicit verification. There is no automated check that HELP text matches actual flag support ([task-007](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **`resolveEndpoint()` simplicity**: Calling `load()` on every resolution (no caching layer) is simple and correct. Performance is negligible since config is a small JSON file read from disk ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **Env vars always win**: `MAYAR_API_URL` and `MAYAR_AUTH_URL` environment variables are checked first in their respective URL functions, before `resolveEndpoint()`. This absolute precedence is intentional and must be preserved ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **`--env=sandbox` inline form is free**: The existing generic `--key=value` handler in `parseFlags()` already catches inline forms. Only the space-separated `--env <value>` form needed explicit handling ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **Endpoint resolution before dispatch**: Setting the runtime endpoint in `cli.js`'s `run()` before version/help/command dispatch ensures all commands see the correct endpoint, including early-exit paths like `--version` and `--help` ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **Both CLI and commands call `setRuntimeEndpoint`**: `cli.js` calls `setRuntimeEndpoint(null)` as a default, then individual commands (login, init) call it again with the user's choice. The command's call correctly overrides because it executes later in the same process ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json), [task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **Interactive prompt guards are layered**: Login checks: flags → TTY → stored endpoint → NODE_ENV. Init checks: flags → TTY only. The difference is deliberate — login is a recurring command that should remember choices, init is a one-time setup that should always offer the choice ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json), [task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **Redirect-following with internal closure**: Using a `doFetch` closure inside the `https.get` callback avoids recursion pollution and handles relative redirects via `new URL(res.headers.location, url)` ([task-005](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **YAML frontmatter stripping by delimiter**: Using `lines[i].trim() === '---'` to find the opening and closing `---` delimiters is robust against trailing whitespace and carriage returns in fetched content ([task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **Force/skip logic is uniform**: All target types (including cursor with its custom `.mdc` generation) use the same force/skip logic — the only branch is content generation, not file writing ([task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
+
+- **Interactive functions are hard to test without DI seams.**
+  `pickFromList()` is async and reads stdin via the existing `ask()` readline
+  pattern. It is not covered by the 70-test suite. This fits the
+  "interactive-path coverage" bucket deferred in the earlier infrastructure
+  work. Future testing needs either a mockable `ask()` seam or a child-process
+  harness. ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **DisplayKey fallback pattern.** Both `pickFromList()` and `table()` use
+  `item[displayKey] ?? ''` to safely handle missing keys. Consistent across
+  the codebase. ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **Docs command bypasses `ensureKey()`.** Documentation browsing is a public
+  endpoint — added as a special case alongside `init`/`login` in `cli.js`
+  before the auth guard. ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **Redirect-following pattern is shared.** Both `fetchLLMsTxt()` and
+  `fetchPageContent()` use the same `doFetch` recursion pattern (redirect
+  counter, `new URL(relative, base).href` resolution) as the existing
+  `skill.js`. Timeout uses `req.setTimeout()` for Node 18+ compat rather than
+  `options.timeout`. ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json),
+  [task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **Cache writes are non-fatal.** Wrapped in `try/catch` — if the cache dir is
+  unwritable (permissions), the data is still returned to the caller. The
+  warning goes to stderr so it doesn't pollute JSON stdout.
+  ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **Single-pass entity decoding avoids the `&amp;` pitfall.** Chained
+  `.replace()` calls would decode `&amp;lt;` → `&lt;` → `<` incorrectly. A
+  single regex with a map callback handles all entities in one pass.
+  ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **`renderContent` is pure (string → string).** No I/O, no process writes —
+  makes it trivially testable without any mocking.
+  ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **Topic resolution uses slug inclusion, not raw substring.** `slugify(input)`
+  → `topic.slug.includes(inputSlug)` catches cases like `create-invoice`
+  matching `create-invoice-link`. Title matching uses case-insensitive
+  `includes()` on the raw input. ([task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **`similarityScore` uses ordered matching.** Characters from the input must
+  appear in sequence in the title (not just a character-set intersection).
+  This gives `'invoic'` a score of 6 against `'Create Invoice'` and `'xyz'` a
+  score of 0 — more robust for typo detection.
+  ([task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **Task preconditions can be stale — always re-read source.** Task-005
+  described three changes to `cli.js`, but most were already implemented by
+  task-002. The task became a small delta rather than a full implementation.
+  ([task-005](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **JSON mode uses `process.exitCode`, not `process.exit()`.** Setting
+  `exitCode = 1` allows `ui.jsonOut()` to flush its output before the process
+  exits naturally. Calling `process.exit(1)` would hide the JSON error
+  response. ([task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **Stale-cache warnings go to stderr in JSON mode.** If a stale-cache warning
+  were written to stdout, it would corrupt the JSON output. Using
+  `process.stderr.write` keeps stdout clean for `ui.jsonOut()`.
+  ([task-006](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
 
 ## Open Questions / What Next
-Feature is complete — all 7 tasks done. No open questions.
+
+- **Interactive-path tests.** `pickFromList()`, the docs TTY prompt flow, and
+  `ensureKey` / `ui.ask` / `ui.askSecret` all remain untested. The 70-test
+  suite deliberately scoped to pure functions. Closing this gap requires
+  either a DI seam (extract `ask` as an injectable dependency) or a
+  child-process harness that feeds stdin and asserts stdout/exit codes.
+  Lowest ROI but needed for full coverage.
+
+- **Network-dependent tests.** `fetchLLMsTxt()` and `fetchPageContent()` make
+  real HTTP calls. The `test/helpers.js` `startServer()` helper (already
+  built) can provide a local HTTP server on port 0, but `src/api.js` and
+  `src/commands/docs.js` freeze their URLs at module load — pointing them at
+  a test server requires env var injection *before* `require()`. A second
+  integration-test layer.
+
+- **Coverage threshold gap.** The `jonggrang.json` threshold is 80; the
+  current suite is well below that by design (see progress log rationale).
+  The next layers (command-level tests with DI, local HTTP integration) are
+  the high-ROI path to closing the gap without resorting to brittle
+  `require.cache` surgery.
+
+- **`pickFromList` generalization.** Currently hardcodes prompt text `Pick a
+  number (or q to quit)`. Could accept an optional `prompt` parameter for
+  reuse in other picker contexts (e.g., "Select a plan").
 
 ## Promotion Candidates
-- **Two-touchpoint rule for new commands**: When adding a new command to mayar-cli, both the `handlers` map and the `HELP()` function in `src/cli.js` must be updated. Consider adding a lint rule or test that verifies every handler key has a corresponding HELP section ([task-007](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **HELP text drift risk**: Global flags and environment documentation in HELP are manually maintained and can silently diverge from actual flag support. A test comparing `parseFlags()` supported flags against HELP text content could catch drift ([task-007](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
-- **Interactive prompt pattern**: The layered guard approach (flags → TTY → stored state → env vars) used in login and init is a reusable pattern for any future command that needs to prompt for user preferences ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json), [task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json)).
+
+- **`pickFromList()` pattern** — reusable interactive selection primitive for
+  any command that needs a numbered picker (e.g., plan selection, project
+  switching). Already extracted into `src/ui.js` and exported.
+  ([task-001](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **`fetchOrGetLLMsTxt()` caching pattern** — 24h TTL, stale-fallback on fetch
+  failure, non-fatal cache writes. Reusable for any cacheable remote content
+  (skill registry, templates, etc.). ([task-002](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **`renderContent()` pure HTML→terminal pipeline** — extraction → tag
+  stripping → entity decoding → whitespace collapse → terminal formatting.
+  Reusable for rendering any fetched HTML page in the terminal.
+  ([task-003](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))
+
+- **`similarityScore()` fuzzy matching** — prefix bonus + ordered
+  shared-character count. Reusable for any "Did you mean?" suggestion feature
+  (command typos, topic search, etc.). ([task-004](.jonggrang/.output/features/login-env-and-skill-install-mrsuauk9/jonggrang-tasks.json))

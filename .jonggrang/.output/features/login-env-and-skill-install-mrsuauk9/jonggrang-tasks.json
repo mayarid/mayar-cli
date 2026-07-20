@@ -2,8 +2,8 @@
   "tasks": [
     {
       "id": "task-001",
-      "title": "Refactor config.js: resolveEndpoint(), setRuntimeEndpoint(), endpoint-aware apiBaseUrl/authBaseUrl",
-      "description": "Refactor src/config.js to support a runtime endpoint override and a unified resolution chain.\n\nImplementation:\n1. Add module-level variable `let _runtimeEndpoint = null;`\n2. Add `setRuntimeEndpoint(ep)` function that validates 'sandbox'/'production'/null, sets _runtimeEndpoint (throw on invalid input)\n3. Add `resolveEndpoint()` implementing the priority chain:\n   - Return _runtimeEndpoint if non-null\n   - Else if NODE_ENV==='development' → 'sandbox'\n   - Else load config and return cfg?.endpoint || 'production'\n4. Refactor `apiBaseUrl()`: if MAYAR_API_URL env → return it; else resolveEndpoint()==='sandbox' → 'https://api.mayar.club' else 'https://api.mayar.id'\n5. Refactor `authBaseUrl()`: if MAYAR_AUTH_URL env → return it; else resolveEndpoint()==='sandbox' → 'https://auth.mayar.club' else 'https://auth.mayar.id'\n6. Update `isDev()` to return resolveEndpoint() === 'sandbox' (backward compat)\n7. Export `setRuntimeEndpoint` and `resolveEndpoint` alongside existing exports\n\nAcceptance:\n- setRuntimeEndpoint('sandbox') then apiBaseUrl() returns sandbox URL\n- setRuntimeEndpoint(null) restores fallback to NODE_ENV / stored config\n- Env vars MAYAR_API_URL/MAYAR_AUTH_URL always take precedence\n- With no config and no env, defaults to production URLs\n- Existing config.test.js tests pass (no breaking changes to save/load/clear)",
+      "title": "Add pickFromList() interactive selection helper to src/ui.js",
+      "description": "Add a pickFromList(items, { displayKey, descriptionKey }) function to src/ui.js that renders a numbered list, prompts the user to pick an item (or 'q' to quit), validates input, and returns the selected item or null. Implementation: (1) Render each item with its 1-based index + display value (from displayKey). (2) If descriptionKey is provided, render descriptions in dim below each item. (3) Use the existing ask() readline pattern from ui.js to prompt 'Pick a number (or q to quit): '. (4) Validate in a loop: reject non-numeric/NaN input with a message and re-prompt; reject out-of-range numbers with 'Invalid selection (1-N)'; accept 'q' or 'Q' to return null. (5) Return the selected item object on valid numeric selection. (6) Export via module.exports alongside existing exports. Acceptance: calling pickFromList([{name:'A'},{name:'B'}], {displayKey:'name'}) renders a numbered list and returns the selected item on valid numeric input, or null on 'q'.",
       "priority": 1,
       "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
@@ -11,17 +11,17 @@
       "blocked_by": [],
       "passes": true,
       "files": [
-        "src/config.js"
+        "src/ui.js"
       ],
-      "started_at": "2026-07-20T09:10:23.143Z",
-      "completed_at": "2026-07-20T09:10:57.064Z",
+      "started_at": "2026-07-20T10:47:11.020Z",
+      "completed_at": "2026-07-20T10:48:19.779Z",
       "error_log": []
     },
     {
       "id": "task-002",
-      "title": "Fix api.js dynamic base URL + add --sandbox/--production/--env flag parsing in cli.js",
-      "description": "Make api.js resolve the base URL dynamically on each request. Add new environment flags (--sandbox, --production, --env) to parseFlags and wire them into config.setRuntimeEndpoint() in run(). Fix the hardcoded endpoint in ensureKey().\n\nImplementation — src/api.js:\n1. Remove module-level `const BASE_URL = config.apiBaseUrl();`\n2. Inside `request()`, replace `BASE_URL` with `config.apiBaseUrl()` so the URL is resolved fresh on every call\n\nImplementation — src/cli.js parseFlags:\n1. Add `--sandbox` → flags.sandbox = true\n2. Add `--production` → flags.production = true\n3. Add `--env <value>` → flags.env = value (the existing unknown-long-flag handler already supports --key=value form)\n\nImplementation — src/cli.js run():\n1. After parseFlags(), resolve endpoint override:\n   - If both sandbox and production are truthy → error + exit(1)\n   - If sandbox → setRuntimeEndpoint('sandbox')\n   - Else if production → setRuntimeEndpoint('production')\n   - Else if flags.env → validate 'sandbox'/'production' (error+exit otherwise), then setRuntimeEndpoint\n   - Else → setRuntimeEndpoint(null)\n2. In ensureKey(), replace hardcoded `endpoint: 'production'` with `endpoint: config.resolveEndpoint()` so the auto-prompt respects --sandbox\n3. Update HELP global flags section: add --sandbox, --production, --env <sandbox|production>\n4. Update HELP environment section: new resolution order text\n\nAcceptance:\n- `mayar --sandbox whoami` uses api.mayar.club\n- `mayar --production whoami` uses api.mayar.id\n- Both --sandbox and --production together errors with clear message\n- Invalid --env value errors\n- `--help` shows new flags and resolution order\n- Existing parseFlags tests continue to pass\n- ensureKey auto-prompt uses resolved endpoint, not hardcoded 'production'",
-      "priority": 1,
+      "title": "Create docs command module: llms.txt fetch, parse, and cache infrastructure",
+      "description": "Create src/commands/docs.js with the core infrastructure for the mayar docs command. Implement: (1) getCacheDir() — returns path.join(config.dir, 'cache'), creating the directory with fs.mkdirSync if it does not exist (recursive, mode 0o700). (2) getCachedLLMsTxt() — reads ~/.config/mayar/cache/llms.txt and ~/.config/mayar/cache/llms-meta.json; checks whether the llms-meta.json fetchedAt timestamp is within 24 hours (Date.now() - new Date(fetchedAt).getTime() < 86400000); returns the cached text if valid, or null if missing/expired. (3) fetchLLMsTxt() — uses https.get to fetch https://docs.mayar.id/llms.txt (User-Agent: mayar-cli/<version>). Set a 10s timeout; follow redirects (301/302) up to 3 hops. On success, write the raw response body to ~/.config/mayar/cache/llms.txt and write { fetchedAt: new Date().toISOString() } to ~/.config/mayar/cache/llms-meta.json; return the raw text. On failure, throw. (4) fetchOrGetLLMsTxt(refresh) — if refresh is true, skip cache and call fetchLLMsTxt(); otherwise call getCachedLLMsTxt(); if null, call fetchLLMsTxt(). If fetch fails and no cache exists, throw with a clear error message including 'Visit https://docs.mayar.id for manual browsing'. If fetch fails but stale cache exists, print a ui.dim warning ('Using stale cache — could not refresh') and return the stale content. (5) parseTitleUrl(line) — takes a Markdown list item line like '- [Create Invoice](https://docs.mayar.id/api/invoice/create)' and returns { title, url } or null if no match. (6) slugify(title) — converts title to a dashed-lowercase slug: lowercase, replace [^a-z0-9]+ with '-', trim leading/trailing dashes. (7) parseLLMsTxt(raw) — parses the llms.txt Markdown into a structured topic map. Sections are identified by lines matching /^## (.+)$/ (e.g., '## Docs', '## OpenAPI Specs'). Each subsequent '- [Title](URL) - description' line becomes a topic entry with: slug (slugify(title)), title, url, description, section (the parent heading name). Returns { sections: [{ name, topics: [{slug, title, url, description, section}] }] }. Skip empty sections. Export: module.exports = { run, parseLLMsTxt, slugify, parseTitleUrl, fetchOrGetLLMsTxt }.",
+      "priority": 2,
       "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
@@ -30,204 +30,90 @@
       ],
       "passes": true,
       "files": [
-        "src/api.js",
+        "src/commands/docs.js",
         "src/cli.js"
       ],
-      "started_at": "2026-07-20T09:11:42.021Z",
-      "completed_at": "2026-07-20T09:13:28.672Z",
+      "started_at": "2026-07-20T10:50:40.651Z",
+      "completed_at": "2026-07-20T10:51:53.414Z",
       "error_log": []
     },
     {
       "id": "task-003",
-      "title": "Add interactive environment selection to mayar login",
-      "description": "Add an interactive TTY prompt to `mayar login` so users can choose between sandbox and production when no --sandbox/--production/--env flag is passed. Save the chosen endpoint to config.json alongside auth tokens.\n\nImplementation — src/commands/login.js:\n1. After ui.printBanner(), check if endpoint was selected via flags:\n   - If config.resolveEndpoint() returns the default 'production' and no flags were passed AND process.stdin.isTTY:\n     a. Print: \"Select environment:\\n  [1] Production (web.mayar.id)\\n  [2] Sandbox (web.mayar.club)\"\n     b. Use ui.ask('Choose [1]: ') to read input\n     c. Default to '1' (production) on empty input\n     d. Map '1'/'production' → 'production', '2'/'sandbox' → 'sandbox'\n     e. Call config.setRuntimeEndpoint(choice)\n   - If NOT a TTY and no flags → proceed with production (or stored config) silently\n2. Add endpoint display: `${ui.dim('Endpoint:')} ${resolved}` after the auth server line\n3. After successful login, save endpoint at top level:\n   - config.save({ ...existing, endpoint: config.resolveEndpoint(), auth: { ... } })\n4. In --json mode: skip the interactive prompt; include endpoint in JSON output\n\nAcceptance:\n- `mayar login` (TTY, no flags) shows env prompt, defaults to production on Enter\n- `mayar login --sandbox` skips prompt, uses auth.mayar.club\n- After login, config.json has \"endpoint\" at top level matching selection\n- The MayarAuth SDK is initialized with the correct auth URL\n- Non-TTY proceeds with production silently",
-      "priority": 2,
+      "title": "Add content fetcher and HTML renderer to docs command",
+      "description": "Implement fetchPageContent(url) and renderContent(html) in src/commands/docs.js. (1) fetchPageContent(url) — uses https.get to retrieve the documentation page HTML. Set a 10-second timeout via req.setTimeout(); on timeout, call req.destroy() and reject/throw with 'Request timed out'. Follow redirects (status 301/302/307/308) by reading the Location header and issuing a new request, up to 3 redirect hops; throw on redirect loop. Return the response body as a UTF-8 string on 2xx status; throw with status code on non-2xx. Use the User-Agent header 'mayar-cli/<version>'. (2) renderContent(html) — extracts the main content region and formats for terminal output: (a) Extract: look for <main>...</main> or <article>...</article> using regex; fallback: <div class=\"[^\"]*content[^\"]*\">...</div>; final fallback: the entire <body> content. (b) Strip all HTML tags via replace(/<[^>]*>/g, ''). (c) Decode common HTML entities: &amp; → &, &lt; → <, &gt; → >, &quot; → \", &#39; → ', &nbsp; → ' ', &#x2F; → /. (d) Collapse 3+ consecutive newlines into 2. (e) Trim leading/trailing whitespace per line. (f) Apply terminal formatting to the extracted text: detect markdown headings (lines starting with #) and wrap them in ui.bold(); detect code fences and indent content between them by 2 spaces; detect horizontal rules (--- or ***) and render as ui.dim dashes. Return the formatted string (do NOT print directly — let the caller decide). Acceptance: given a sample HTML snippet like '<main><h1>Hello</h1><p>World</p></main>', renderContent returns a string with bold heading and plain paragraph. Export: add fetchPageContent and renderContent to module.exports.",
+      "priority": 3,
       "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
-        "task-001",
         "task-002"
       ],
       "passes": true,
       "files": [
-        "src/commands/login.js"
+        "src/commands/docs.js"
       ],
-      "started_at": "2026-07-20T09:13:56.299Z",
-      "completed_at": "2026-07-20T09:15:51.786Z",
+      "started_at": "2026-07-20T10:53:45.083Z",
+      "completed_at": "2026-07-20T10:54:54.676Z",
       "error_log": []
     },
     {
       "id": "task-004",
-      "title": "Add interactive environment selection to mayar init",
-      "description": "Add an interactive TTY prompt to `mayar init` so first-time users can choose between sandbox and production. Save the chosen endpoint alongside the API key in config.json.\n\nImplementation — src/commands/init.js:\n1. After ui.printBanner() and the existing API key check/overwrite logic:\n   - If no --sandbox/--production/--env flag was set AND process.stdin.isTTY:\n     a. Print: \"Select environment:\\n  [1] Production (web.mayar.id)\\n  [2] Sandbox (web.mayar.club)\"\n     b. Use ui.ask('Choose [1]: ') to read input\n     c. Default to '1' (production) on empty input\n     d. Map '1'/'production' → 'production', '2'/'sandbox' → 'sandbox'\n     e. Call config.setRuntimeEndpoint(choice)\n   - If NOT a TTY and no flags → keep production as default\n2. Update the welcome message to reference the correct web URL based on environment:\n   - Replace hardcoded 'https://web.mayar.id' with the resolved web URL (web.mayar.id for production, web.mayar.club for sandbox)\n3. Save endpoint: `config.save({ apiKey: key.trim(), endpoint: config.resolveEndpoint(), savedAt: ... })`\n   - This replaces the hardcoded `endpoint: 'production'`\n4. Add success output line: `${ui.dim('Endpoint:')} ${resolved}`\n\nAcceptance:\n- `mayar init` (TTY, no flags) shows env prompt, defaults to production\n- `mayar init --sandbox` skips prompt, saves endpoint='sandbox'\n- After init, config.json contains both apiKey and endpoint\n- Welcome message URL matches chosen environment\n- Non-TTY without flags saves production endpoint",
-      "priority": 2,
+      "title": "Implement docs command UX: interactive, keyword, non-TTY, and topic resolution",
+      "description": "Implement the run() function and all UX paths in src/commands/docs.js. The run(ctx) function receives { flags, positional } where positional is the topic keyword (e.g., ['invoice']) or empty []. Implementation: (1) Call fetchOrGetLLMsTxt(flags.refresh) to get the llms.txt content, then parseLLMsTxt() to build the section-structured topic index. (2) Build a flat allTopics array by concatenating all section.topics for lookup/filtering. (3) Topic resolution (when positional[0] is provided): normalize the input via slugify(). Find matches where the input slug is a substring of the topic slug OR the input is a case-insensitive substring of the topic title. If exactly 1 match: fetch the page content via fetchPageContent(url), render via renderContent(), print header (ui.bold(title) + ' — ' + ui.cyan(url)), print the rendered content, print ui.dim('───'). If multiple matches: print a numbered list of matches with title, section in dim, and description. If no match: print 'No documentation found for \"<input>\"' followed by a 'Did you mean?' suggestion — implement simple fuzzy matching: for each topic, compute a similarity score (prefix match bonus + shared character count) and suggest the top 3 closest titles. (4) No-argument TTY mode (process.stdout.isTTY): show section headers as ui.bold(section.name), flatten topics into a single list, call pickFromList(items, { displayKey: 'title', descriptionKey: 'description' }); if user picked an item, fetchPageContent + renderContent for the chosen topic's URL and display it; if null (quit), exit silently. (5) No-argument non-TTY mode (piped): print a plain-text categorized listing: section headers as '## SectionName', each topic as '  - Title — description'. Do not prompt. (6) All output goes to process.stdout.write. Use ui.dim, ui.bold, ui.cyan, ui.red from src/ui.js. Note: the --json paths are handled separately in task-006; in this task, if flags.json is true, delegate to the JSON handler (or skip and let task-006 wire it). Export the full module.exports.",
+      "priority": 4,
       "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-001",
-        "task-002"
+        "task-002",
+        "task-003"
       ],
       "passes": true,
       "files": [
-        "src/commands/init.js"
+        "src/commands/docs.js"
       ],
-      "started_at": "2026-07-20T09:17:10.507Z",
-      "completed_at": "2026-07-20T09:17:38.411Z",
+      "started_at": "2026-07-20T10:56:11.259Z",
+      "completed_at": "2026-07-20T10:57:52.091Z",
       "error_log": []
     },
     {
       "id": "task-005",
-      "title": "Create src/commands/skill.js — fetch SKILL.md from GitHub and install to agent target directories",
-      "description": "Create a new `mayar skill install` command that fetches SKILL.md from the GitHub raw URL and writes it to multiple AI agent skill directories.\n\nImplementation — src/commands/skill.js (new file):\n1. Export `run(ctx)` where ctx = { apiKey, flags, positional }\n2. Parse subcommands: first positional must be 'install'\n   - No subcommand or 'help' → print usage and return\n   - Unknown subcommand → error + exit(1)\n3. For 'install':\n   a. Determine target from flags.target (default 'all'); valid: 'all', 'agents', 'claude', 'opencode', 'codex', 'cursor'\n   b. Fetch SKILL.md from https://raw.githubusercontent.com/mayarid/mayar-cli/refs/heads/main/SKILL.md using https.get\n      - Follow 301/302 redirects (up to 3 hops)\n      - On failure: print error, exit(1)\n   c. Define target files (under cwd):\n      - '.agents/skills/mayar/SKILL.md' (target: agents)\n      - '.claude/skills/mayar/SKILL.md' (target: claude)\n      - '.opencode/skills/mayar/SKILL.md' (target: opencode)\n      - '.codex/skills/mayar/SKILL.md' (target: codex)\n      - '.cursor/rules/mayar.mdc' (target: cursor) — implementation in task-006\n   d. For each applicable directory: create parent dirs with fs.mkdirSync({recursive:true})\n      - File exists && !flags.force → print \"Skipping: <path> (use --force to overwrite)\"\n      - Otherwise → write content, print \"Installed: <path>\"\n   e. If --json: output JSON array of {target, path, status}\n\nAcceptance:\n- `mayar skill install` fetches SKILL.md and writes to .agents/, .claude/, .opencode/, .codex/\n- `mayar skill install --target claude` only writes to .claude/\n- Running twice without --force shows skip messages\n- Running with --force overwrites existing files\n- Invalid --target value errors\n- Network errors print clear message and exit non-zero\n- --json outputs machine-readable JSON\n- Uses only Node.js built-in modules (https, fs, path)",
-      "priority": 2,
+      "title": "Register docs command in CLI, add help text, and parse --refresh flag",
+      "description": "Wire the docs command into the CLI by making three targeted changes to src/cli.js: (1) Add 'docs' to the handlers map in the run() function: handlers.docs = './commands/docs' (alongside the existing entries, placed alphabetically or at the end of the map). (2) Add a Documentation section to the HELP() template string. Place it right after the Setup section for visibility. Format: `${ui.bold('Documentation:')}\\n  docs [topic] [--json] [--refresh]        Browse Mayar API docs in the terminal\\n`. Also add the --refresh flag description in the Global flags section: `  --refresh             Force re-fetch cached data (docs command)\\n` placed after the existing --data flag line. (3) Add --refresh parsing in parseFlags(): add `else if (a === '--refresh') flags.refresh = true;` before the generic '--' handler (i.e., before the `else if (a.startsWith('--'))` block). Do NOT modify any other behavior — all existing commands and flag parsing must continue working. Acceptance: running `mayar docs` invokes the docs command module; `mayar --help` shows the Documentation section with the docs entry; `mayar docs --refresh` sets flags.refresh = true before the docs command runs.",
+      "priority": 5,
       "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
-        "task-001",
         "task-002"
       ],
       "passes": true,
       "files": [
-        "src/commands/skill.js"
+        "src/cli.js"
       ],
-      "started_at": "2026-07-20T09:19:25.496Z",
-      "completed_at": "2026-07-20T09:20:47.471Z",
+      "started_at": "2026-07-20T10:59:06.586Z",
+      "completed_at": "2026-07-20T10:59:33.109Z",
       "error_log": []
     },
     {
       "id": "task-006",
-      "title": "Cursor .mdc adaptation — generate .cursor/rules/mayar.mdc with YAML frontmatter",
-      "description": "Extend the skill install command to generate a Cursor-specific .mdc rule file when --target is 'all' or 'cursor'. The .mdc file wraps SKILL.md content with Cursor-compatible YAML frontmatter.\n\nImplementation — extend src/commands/skill.js:\n1. Add function `generateCursorMdc(skillContent)` that returns the full .mdc content:\n   a. Strip the SKILL.md's own YAML frontmatter (lines between first `---` and second `---`) to avoid nested delimiters\n   b. Prepend Cursor .mdc frontmatter:\n      ```\n      ---\n      alwaysApply: true\n      description: Mayar CLI — interact with the Mayar payment platform (invoices, products, payments, customers, transactions, webhooks, QR codes, memberships, credit wallets, discounts, installments, bundling, SaaS/software licensing).\n      globs:\n        - \"**/*\"\n      ---\n      ```\n   c. After frontmatter, add the remaining SKILL.md body (without original frontmatter). If the original frontmatter can't be parsed (no `---` delimiters), include raw content as-is\n2. In the install loop, when target === 'cursor' (or 'all' covers cursor):\n   - Generate content via generateCursorMdc()\n   - Write to .cursor/rules/mayar.mdc\n   - Follow same force/skip logic\n   - Print \"Installed (Cursor .mdc): .cursor/rules/mayar.mdc\"\n\nAcceptance:\n- `mayar skill install --target cursor` creates .cursor/rules/mayar.mdc\n- .mdc has valid YAML frontmatter with alwaysApply, description, globs\n- No nested `---` YAML delimiters in the output\n- `mayar skill install` (default all) includes Cursor .mdc\n- `mayar skill install --target agents` does NOT generate .mdc\n- Force/skip logic works for .mdc files too",
-      "priority": 3,
-      "status": "completed",
-      "feature_id": "login-env-and-skill-install-mrsuauk9",
-      "skill": null,
-      "blocked_by": [
-        "task-005"
-      ],
-      "passes": true,
-      "files": [
-        "src/commands/skill.js"
-      ],
-      "started_at": "2026-07-20T09:22:05.267Z",
-      "completed_at": "2026-07-20T09:23:30.380Z",
-      "error_log": []
-    },
-    {
-      "id": "task-007",
-      "title": "Register skill command in cli.js handlers + update HELP with skill and env flags sections",
-      "description": "Wire the skill command into the CLI command routing and finalize the HELP text documentation.\n\nImplementation — src/cli.js:\n1. Add 'skill' to the `handlers` map:\n   - `skill: './commands/skill'`\n2. Update the HELP() function:\n   a. Add a new section under Setup:\n      `${ui.bold('Agent Skills:')}\n        skill install [--target <all|agents|claude|opencode|codex|cursor>] [--force]`\n      with description: \"Install Mayar SKILL.md into AI agent directories\"\n   b. Verify/ensure the Global flags section includes --sandbox, --production, --env <sandbox|production> (these may have been added in task-002; check and add if missing)\n   c. Verify/ensure the Environment section resolution order text is updated to the new chain (may have been added in task-002; check and add if missing)\n\nAcceptance:\n- `mayar skill install` runs the skill command\n- `mayar skill` without subcommand shows skill-specific help\n- `mayar -h` shows the new skill section\n- Global flags section includes --sandbox, --production, --env\n- Environment section shows correct resolution order\n- Unknown command 'skillx' still errors",
-      "priority": 3,
+      "title": "Implement --json output mode for docs command",
+      "description": "Add JSON output mode to the docs command in src/commands/docs.js. In the run() function, when flags.json is true, short-circuit before any interactive or plain-text output: (1) No topic argument (positional is empty): build the flat topics array from parseLLMsTxt output, then call ui.jsonOut({ topics: arrayOfAllTopics }) where each entry is { slug, title, url, description, section }. Return immediately — no fetch, no prompt. (2) Topic argument with exactly one match: call fetchPageContent(matchedTopic.url), then call renderContent() on the HTML, then call ui.jsonOut({ topic: matchedTopic.slug, title: matchedTopic.title, url: matchedTopic.url, content: renderedText }). Return. (3) Topic argument with multiple matches: call ui.jsonOut({ matches: arrayOfMatches }) where each is { topic: slug, title, url, description }. Return — do not prompt the user to pick. (4) Topic argument with zero matches: call ui.jsonOut({ error: 'No documentation found for \"<input>\"', suggestions: [top3ClosestSlugs] }). Set process.exitCode = 1 but do NOT call process.exit(). Return. In all JSON paths, write output ONLY via ui.jsonOut() to stdout — no other stdout writes. Warnings (stale cache, etc.) may go to stderr via process.stderr.write. Acceptance: 'mayar docs --json' prints { topics: [...] }; 'mayar docs invoice --json' with exact match prints { topic, title, url, content }; multi-match prints { matches: [...] }; no-match prints { error, suggestions }.",
+      "priority": 5,
       "status": "completed",
       "feature_id": "login-env-and-skill-install-mrsuauk9",
       "skill": null,
       "blocked_by": [
         "task-002",
-        "task-006"
+        "task-003"
       ],
       "passes": true,
       "files": [
-        "src/cli.js"
-      ],
-      "started_at": "2026-07-20T09:24:16.535Z",
-      "completed_at": "2026-07-20T09:25:25.633Z",
-      "error_log": []
-    },
-    {
-      "id": "task-008",
-      "title": "Create src/commands/docs.js — fetch, cache, and parse llms.txt index",
-      "description": "Create the docs.js module as the core infrastructure for the mayar docs command. Implement four pieces: (1) fetchLlmsTxt() — GET https://docs.mayar.id/llms.txt with https.get + redirect-follow (copy the pattern from skill.js: follow 301/302 up to 3 hops, reject on non-200, accumulate body with res.on('data')/res.on('end')). (2) parseIndex(raw) — parse the llms.txt markdown into an array of {category, title, url, description} objects grouped by ## sections. Each ## heading becomes the category name. Each bullet/line under a heading that contains a markdown link [title](url) becomes an entry. Extract description from trailing text after the link. (3) Cache management: write the raw llms.txt to ~/.config/mayar/cache/llms.txt (using fs.mkdirSync({recursive:true}) for parent dirs) alongside ~/.config/mayar/cache/meta.json containing {fetchedAt: ISO timestamp}. On startup, check cache freshness: if cache exists and meta.fetchedAt is within 24 hours AND --refresh flag is NOT set, skip network fetch and use cached copy. (4) Graceful fallback: if network fetch fails but a cached llms.txt exists (even if stale), use it with ui.dim('⚠ Using cached documentation (offline).'). If no cache exists and fetch fails, print ui.red('Error: Could not fetch documentation and no cache available.') and exit(1). Export async function run(ctx) matching the pattern of skill.js (receives {flags, positional}). For this task, run() should only validate the setup works — actual browsing/search behavior comes in later tasks.",
-      "priority": 1,
-      "status": "pending",
-      "feature_id": "login-env-and-skill-install-mrsuauk9",
-      "skill": null,
-      "blocked_by": [],
-      "passes": false,
-      "files": [
         "src/commands/docs.js"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "error_log": []
-    },
-    {
-      "id": "task-009",
-      "title": "Implement interactive TTY browsing (mayar docs without arguments)",
-      "description": "Add interactive browsing mode to docs.js run(). When process.stdin.isTTY is true and positional has no keyword argument, render a numbered menu of categories from the parsed llms.txt index. Implementation: (1) Group entries by category; display each category as ui.bold('N. Category Name') with a count of endpoints (ui.dim). (2) Use ui.ask('Choose a topic (or 0 to exit): ') to prompt. (3) On valid numeric selection, fetch the documentation page URL using the same https.get+redirect pattern from fetchLlmsTxt(); show ui.dim('Fetching...') while loading. (4) Render the fetched Markdown: lines starting with '#' get ui.bold(), lines starting with '```' get ui.dim(), normal text prints as-is. After rendering, loop back to the menu prompt. (5) Handle edge cases: input '0' or empty exits cleanly; invalid number prints ui.red('Invalid choice.') and re-prompts; input 'a' or 'all' re-displays the full menu. Do not use external Markdown libraries — raw terminal rendering only using existing ui helpers.",
-      "priority": 2,
-      "status": "pending",
-      "feature_id": "login-env-and-skill-install-mrsuauk9",
-      "skill": null,
-      "blocked_by": [
-        "task-008"
-      ],
-      "passes": false,
-      "files": [
-        "src/commands/docs.js"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "error_log": []
-    },
-    {
-      "id": "task-010",
-      "title": "Implement keyword search (mayar docs <topic>)",
-      "description": "Add keyword search mode to docs.js run(). When a positional argument (keyword) is provided, filter the parsed llms.txt index entries case-insensitively. Implementation: (1) Search across title, description, and url fields using String.includes() (no regex). (2) If matches found: display as a bullet list with ui.bold(title), the url in ui.cyan(), and description in ui.dim(). If exactly ONE match, automatically fetch and display the full documentation page (same rendering logic as task-009 — bold headings, dim code blocks). If MULTIPLE matches, show only the list (user can re-run with a more specific keyword). (3) If ZERO matches: print ui.yellow('No documentation found for \"<keyword>\".') followed by ui.dim('Run mayar docs without arguments to browse all topics.'). (4) The search should still honor --refresh flag (re-fetch index before searching). Do NOT fetch page content for zero-match case.",
-      "priority": 2,
-      "status": "pending",
-      "feature_id": "login-env-and-skill-install-mrsuauk9",
-      "skill": null,
-      "blocked_by": [
-        "task-008"
-      ],
-      "passes": false,
-      "files": [
-        "src/commands/docs.js"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "error_log": []
-    },
-    {
-      "id": "task-011",
-      "title": "Implement JSON output mode (--json flag)",
-      "description": "Add --json output support to docs.js run(). When flags.json is true, bypass all interactive prompts and pretty-print code paths — output structured JSON via ui.jsonOut() and return. Implementation: (1) For mayar docs --json (no keyword): output {topics: [{category, title, url, description}...]} — the full parsed index. (2) For mayar docs <keyword> --json: output {matches: [{category, title, url, description}...], keyword: '<keyword>'}. (3) When a keyword yields exactly ONE match AND --json is set: fetch the full documentation page and include the raw content as a content field in the match object. (4) The --json flag must work non-interactively (no TTY required) — skip all ui.ask() calls. (5) When --json is combined with --refresh, re-fetch the index before outputting (always, even if cache is fresh). Ensure the JSON output is valid and well-formed.",
-      "priority": 3,
-      "status": "pending",
-      "feature_id": "login-env-and-skill-install-mrsuauk9",
-      "skill": null,
-      "blocked_by": [
-        "task-009",
-        "task-010"
-      ],
-      "passes": false,
-      "files": [
-        "src/commands/docs.js"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "error_log": []
-    },
-    {
-      "id": "task-012",
-      "title": "Register docs command in cli.js routing + add to HELP text + add --refresh flag",
-      "description": "Wire the docs command into src/cli.js: (1) Add --refresh as an explicit boolean flag in parseFlags() — insert before the generic -- handler alongside --json and --force: else if (a === '--refresh') flags.refresh = true; This prevents --refresh from consuming the next argument as a value. (2) Route the docs command before the ensureKey() gate in run(): add a block if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter(x => x !== undefined) }); } placed after the config block and before the handlers map lookup. Documentation is public — no API key required. (3) Add a Documentation: section to the HELP() template string between the Agent Skills: and Account: sections: docs [topic] — Browse and search Mayar API documentation from docs.mayar.id followed by dim text showing the --json and --refresh flags on the next line.",
-      "priority": 3,
-      "status": "pending",
-      "feature_id": "login-env-and-skill-install-mrsuauk9",
-      "skill": null,
-      "blocked_by": [
-        "task-008"
-      ],
-      "passes": false,
-      "files": [
-        "src/cli.js"
-      ],
-      "started_at": null,
-      "completed_at": null,
+      "started_at": "2026-07-20T11:01:08.150Z",
+      "completed_at": "2026-07-20T11:02:03.111Z",
       "error_log": []
     }
   ]
