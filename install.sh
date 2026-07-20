@@ -65,6 +65,9 @@ rm -rf "$INSTALL_DIR"/bin "$INSTALL_DIR"/src "$INSTALL_DIR"/package.json "$INSTA
 cp -R "$TMP/package/." "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/bin/mayar.js"
 
+info "Installing dependencies…"
+(cd "$INSTALL_DIR" && npm install --omit=dev --no-audit --no-fund)
+
 # --- symlink ----------------------------------------------------------------
 ln -sf "$INSTALL_DIR/bin/mayar.js" "$BIN_DIR/mayar"
 
