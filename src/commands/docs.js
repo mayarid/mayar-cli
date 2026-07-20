@@ -221,6 +221,31 @@ function parseLLMsTxt(raw) {
 }
 
 // ---------------------------------------------------------------------------
+// similarityScore — fuzzy matching for "Did you mean?" suggestions
+// ---------------------------------------------------------------------------
+function similarityScore(input, title) {
+  let score = 0;
+  const lowerInput = input.toLowerCase();
+  const lowerTitle = title.toLowerCase();
+
+  // Prefix match bonus
+  if (lowerTitle.startsWith(lowerInput)) {
+    score += 100;
+  }
+
+  // Shared character count: characters from input appearing in order in the title
+  let inputIdx = 0;
+  for (let i = 0; i < lowerTitle.length && inputIdx < lowerInput.length; i++) {
+    if (lowerTitle[i] === lowerInput[inputIdx]) {
+      inputIdx++;
+    }
+  }
+  score += inputIdx;
+
+  return score;
+}
+
+// ---------------------------------------------------------------------------
 // run — CLI entry point
 // ---------------------------------------------------------------------------
 async function run(ctx) {
@@ -244,149 +269,147 @@ async function run(ctx) {
 
   const { sections } = parseLLMsTxt(raw);
 
-  if (topic) {
-    // Keyword-filtered mode
-    const q = topic.toLowerCase();
-    const matches = [];
-    for (const sec of sections) {
-      for (const t of sec.topics) {
-        if (
-          t.title.toLowerCase().includes(q) ||
-          t.slug.includes(q) ||
-          t.description.toLowerCase().includes(q)
-        ) {
-          matches.push(t);
-        }
-      }
+  // Build flat allTopics array for lookup/filtering
+  const allTopics = [];
+  for (const sec of sections) {
+    for (const t of sec.topics) {
+      allTopics.push(t);
     }
+  }
+
+  // --json mode: delegate to task-006, keep minimal stub
+  if (json) {
+    if (topic) {
+      const matches = allTopics.filter(
+        (t) =>
+          t.title.toLowerCase().includes(topic.toLowerCase()) ||
+          t.slug.includes(topic.toLowerCase()),
+      );
+      ui.jsonOut({ topic, matches });
+    } else {
+      ui.jsonOut({
+        topics: allTopics.map((t) => ({
+          slug: t.slug,
+          title: t.title,
+          url: t.url,
+          description: t.description,
+          section: t.section,
+        })),
+      });
+    }
+    return;
+  }
+
+  if (topic) {
+    // --- Topic resolution ---
+    const inputSlug = slugify(topic);
+    const inputLower = topic.toLowerCase();
+
+    const matches = allTopics.filter((t) => {
+      // Input slug is a substring of the topic slug
+      // OR input is a case-insensitive substring of the topic title
+      return t.slug.includes(inputSlug) || t.title.toLowerCase().includes(inputLower);
+    });
 
     if (matches.length === 0) {
-      if (json) {
-        ui.jsonOut({ matches: [] });
-      } else {
-        process.stdout.write(
-          ui.dim(`No topics found matching "${topic}"`) + '\n',
-        );
-      }
-      return;
-    }
+      // No match — show "No documentation found for" + fuzzy "Did you mean?"
+      process.stdout.write(
+        `No documentation found for "${topic}"` + '\n',
+      );
 
-    if (json) {
-      if (matches.length === 1) {
-        ui.jsonOut({
-          topic: matches[0].slug,
-          title: matches[0].title,
-          url: matches[0].url,
-          description: matches[0].description,
-          section: matches[0].section,
-        });
-      } else {
-        ui.jsonOut({ matches });
+      // Fuzzy matching: compute similarity scores for all topics
+      const scored = allTopics.map((t) => ({
+        topic: t,
+        score: similarityScore(topic, t.title),
+      }));
+      scored.sort((a, b) => b.score - a.score);
+      const top3 = scored.slice(0, 3).filter((s) => s.score > 0);
+
+      if (top3.length > 0) {
+        process.stdout.write('\n' + ui.dim('Did you mean?') + '\n');
+        for (let i = 0; i < top3.length; i++) {
+          process.stdout.write(
+            `  ${i + 1}. ${top3[i].topic.title}` + '\n',
+          );
+        }
       }
       return;
     }
 
     if (matches.length === 1) {
+      // Single match — fetch page content and render
       const m = matches[0];
       process.stdout.write(
-        `${ui.bold(m.title)}  ${ui.dim(`(${m.section})`)}\n`,
+        `${ui.bold(m.title)} — ${ui.cyan(m.url)}` + '\n',
       );
-      process.stdout.write(`${ui.cyan(m.url)}\n`);
-      if (m.description) {
-        process.stdout.write(ui.dim(m.description) + '\n');
+
+      try {
+        const html = await fetchPageContent(m.url);
+        const rendered = renderContent(html);
+        process.stdout.write(rendered + '\n');
+      } catch (_err) {
+        process.stdout.write(ui.dim('(could not fetch page content)') + '\n');
       }
+
+      process.stdout.write(ui.dim('───') + '\n');
     } else {
+      // Multiple matches — numbered list
       process.stdout.write(
-        ui.dim(
-          `${matches.length} topics match "${topic}":`,
-        ) + '\n\n',
+        `${matches.length} topics match "${topic}":` + '\n\n',
       );
-      for (const m of matches) {
+      for (let i = 0; i < matches.length; i++) {
+        const m = matches[i];
         process.stdout.write(
-          `  ${ui.bold(m.title)}  ${ui.dim(`(${m.section})`)}\n`,
+          `  ${i + 1}. ${m.title} ${ui.dim('(' + m.section + ')')}` + '\n',
         );
-        process.stdout.write(`  ${ui.cyan(m.url)}\n`);
         if (m.description) {
-          process.stdout.write(`  ${ui.dim(m.description)}\n`);
+          process.stdout.write(`     ${ui.dim(m.description)}` + '\n');
         }
-        process.stdout.write('\n');
       }
     }
   } else {
-    // No topic argument
-    if (json) {
-      // Output structured JSON
-      const topics = [];
-      for (const sec of sections) {
-        for (const t of sec.topics) {
-          topics.push({
-            slug: t.slug,
-            title: t.title,
-            url: t.url,
-            description: t.description,
-            section: t.section,
-          });
-        }
-      }
-      ui.jsonOut({ topics });
-      return;
-    }
-
+    // --- No topic argument ---
     if (process.stdout.isTTY) {
-      // Interactive mode — display the categorized list
-      const allTopics = [];
+      // Interactive TTY mode — show section headers, flatten topics, pickFromList
       for (const sec of sections) {
-        allTopics.push({ type: 'section', name: sec.name });
-        for (const t of sec.topics) {
-          allTopics.push({ type: 'topic', ...t });
-        }
+        process.stdout.write(ui.bold(sec.name) + '\n');
       }
-
-      // Build a flat numbered list for pickFromList
-      const items = [];
-      for (const sec of sections) {
-        for (const t of sec.topics) {
-          items.push(t);
-        }
-      }
-
-      // Print sections with topics
-      for (const sec of sections) {
-        process.stdout.write('\n' + ui.bold(sec.name) + '\n');
-        for (let i = 0; i < sec.topics.length; i++) {
-          const t = sec.topics[i];
-          const num = items.indexOf(t) + 1;
-          process.stdout.write(
-            `  ${String(num).padEnd(3)} ${t.title}  ${ui.dim(t.description)}\n`,
-          );
-        }
-      }
-
       process.stdout.write('\n');
-      const selected = await ui.pickFromList(items, {
+
+      const selected = await ui.pickFromList(allTopics, {
         displayKey: 'title',
         descriptionKey: 'description',
       });
+
       if (selected) {
+        // Fetch and render the page content for the chosen topic
         process.stdout.write('\n');
         process.stdout.write(
-          `${ui.bold(selected.title)}  ${ui.dim(`(${selected.section})`)}\n`,
+          `${ui.bold(selected.title)} — ${ui.cyan(selected.url)}` + '\n',
         );
-        process.stdout.write(`${ui.cyan(selected.url)}\n`);
-        if (selected.description) {
-          process.stdout.write(ui.dim(selected.description) + '\n');
-        }
-      }
-    } else {
-      // Non-TTY — print categorized list
-      for (const sec of sections) {
-        process.stdout.write(ui.bold(sec.name) + '\n');
-        for (const t of sec.topics) {
+
+        try {
+          const html = await fetchPageContent(selected.url);
+          const rendered = renderContent(html);
+          process.stdout.write(rendered + '\n');
+        } catch (_err) {
           process.stdout.write(
-            `  ${t.title}  ${ui.dim(t.description)}\n`,
+            ui.dim('(could not fetch page content)') + '\n',
           );
         }
-        process.stdout.write('\n');
+
+        process.stdout.write(ui.dim('───') + '\n');
+      }
+      // null (quit) → exit silently
+    } else {
+      // Non-TTY — plain-text categorized listing
+      for (const sec of sections) {
+        process.stdout.write('## ' + sec.name + '\n');
+        for (const t of sec.topics) {
+          process.stdout.write(
+            `  - ${t.title} — ${t.description}` + '\n',
+          );
+        }
       }
     }
   }
@@ -566,6 +589,7 @@ module.exports = {
   parseLLMsTxt,
   slugify,
   parseTitleUrl,
+  similarityScore,
   fetchOrGetLLMsTxt,
   fetchPageContent,
   renderContent,
