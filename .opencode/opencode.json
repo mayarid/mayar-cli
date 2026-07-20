@@ -1,9 +1,0 @@
-{
-  "instructions": [
-    "AGENTS.md",
-    "CLAUDE.md"
-  ],
-  "permission": {
-    "*": "allow"
-  }
-}

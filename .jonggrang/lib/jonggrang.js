@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execSync, execFile } = require('child_process');
 const { buildAgentArgs } = require('./backend-args');
+const memory = require('./memory');
 
 // ============================================================
 // CONFIGURATION HELPERS
@@ -32,12 +33,321 @@ function getProjectPaths(projectRoot) {
   const tool = (() => { try { return readJSON(configFile)?.tool || null; } catch { return null; } })();
   return {
     configFile,
-    tasksFile:    path.join(jonggrangDir, 'jonggrang-tasks.json'),
-    planFile:     path.join(jonggrangDir, 'plan.md'),
-    progressFile: path.join(jonggrangDir, 'progress.txt'),
-    agentsFile:   path.join(projectRoot, 'AGENTS.md'),
-    skillsDir:    resolveSkillsDir(projectRoot, tool),
+    tasksFile: path.join(jonggrangDir, 'jonggrang-tasks.json'),       // legacy root location — only used by migration read in cmdInit
+    legacyPlanFile: path.join(jonggrangDir, 'plan.md'),                    // legacy pending draft path — migrated to .drafts/<session>/plan.md
+    questionsFile: path.join(jonggrangDir, 'plan-questions.json'),        // legacy root sidecar — superseded by per-draft questionsFileFor()
+    answersFile: path.join(jonggrangDir, 'plan-answers.json'),          // legacy root sidecar — superseded by per-draft answersFileFor()
+    progressFile: path.join(jonggrangDir, 'progress.txt'),               // legacy root location — only used by migration read in cmdInit
+    agentsFile: path.join(projectRoot, 'AGENTS.md'),
+    skillsDir: resolveSkillsDir(projectRoot, tool),
   };
+}
+
+// ============================================================
+// PER-FEATURE STATE PATHS
+// ============================================================
+// Tasks and progress live per-feature, colocated with plan.md / MANIFEST.yaml
+// under .jonggrang/.output/features/<feature_id>/. Callers MUST resolve the
+// feature id before calling — there is no implicit "active feature".
+
+function featureFileFor(projectRoot, featureId, fileName) {
+  if (!featureId) throw new Error(`featureFileFor: featureId is required (${fileName})`);
+  return path.join(projectRoot, '.jonggrang', '.output', 'features', featureId, fileName);
+}
+
+const tasksFileFor = (projectRoot, featureId) => featureFileFor(projectRoot, featureId, 'jonggrang-tasks.json');
+const progressFileFor = (projectRoot, featureId) => featureFileFor(projectRoot, featureId, 'progress.txt');
+
+// Merge every feature's tasks file into one view. Used ONLY by cross-feature
+// views (cmdStatus, cmdList, dashboard, task-id auto-lookup). Per-feature
+// operations read a single feature file via tasksFileFor().
+function getAllTasks(projectRoot) {
+  const root = projectRoot || process.cwd();
+  const featuresDir = path.join(root, '.jonggrang', '.output', 'features');
+  if (!fileExists(featuresDir)) return { feature: '', branch: '', tasks: [] };
+  const merged = { tasks: [] };
+  for (const name of fs.readdirSync(featuresDir)) {
+    const p = tasksFileFor(root, name);
+    const data = readJSON(p);
+    if (data && Array.isArray(data.tasks)) {
+      // Ensure every task carries feature_id (redundant w/ folder, but cheap & stable)
+      for (const t of data.tasks) {
+        if (!t.feature_id) t.feature_id = name;
+      }
+      merged.tasks.push(...data.tasks);
+    }
+  }
+  return merged;
+}
+
+// Resolve the "most recent incomplete feature" for commands without a task-id
+// context (task add / task next default). Mirrors findIncompleteManifest
+// ordering: MANIFEST status running|in_progress|paused|failed, newest updated_at.
+function resolveActiveFeature(projectRoot) {
+  const featuresDir = path.join(projectRoot, '.jonggrang', '.output', 'features');
+  if (!fileExists(featuresDir)) return null;
+  const yaml = require('js-yaml');
+  const candidates = [];
+  for (const name of fs.readdirSync(featuresDir)) {
+    const manifestPath = path.join(featuresDir, name, 'MANIFEST.yaml');
+    let m = null;
+    try { m = yaml.load(fs.readFileSync(manifestPath, 'utf8')); } catch { continue; }
+    if (!m || !['running', 'in_progress', 'paused', 'failed'].includes(m.status)) continue;
+    candidates.push({ featureId: name, updated_at: m.updated_at || m.created_at || '' });
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  return candidates[0].featureId;
+}
+
+// Locate which feature a task-id lives in. Used by task-id commands
+// (show/update/done/block/remove) to resolve the correct per-feature file.
+// Since numbering is per-feature, a bare id (task-005) can recur across plans;
+// disambiguate in order: (1) explicit opts.featureId, (2) the active feature,
+// (3) a single global match (legacy globally-unique ids keep working). If still
+// ambiguous, throw AMBIGUOUS_TASK_ID with the candidate features so the caller
+// can tell the user to pass --feature. Returns the featureId, or null if unknown.
+function findTaskFeature(projectRoot, taskId, opts = {}) {
+  const all = getAllTasks(projectRoot);
+  const matches = all.tasks.filter(t => t.id === taskId);
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0].feature_id || null;
+  if (opts.featureId && matches.some(t => t.feature_id === opts.featureId)) return opts.featureId;
+  const active = resolveActiveFeature(projectRoot);
+  if (active && matches.some(t => t.feature_id === active)) return active;
+  // Genuinely ambiguous. The CLI resolver opts into a hard error so the user
+  // disambiguates; programmatic callers (worktree/web, which usually already run
+  // in a single-plan context) get a best-effort first match instead of a crash.
+  if (opts.throwOnAmbiguous) {
+    const candidates = matches.map(t => t.feature_id).filter(Boolean);
+    const err = new Error(`Task ${taskId} exists in ${matches.length} plans: ${candidates.join(', ')}. Disambiguate with --feature <id>.`);
+    err.code = 'AMBIGUOUS_TASK_ID';
+    err.candidates = candidates;
+    throw err;
+  }
+  return matches[0].feature_id || null;
+}
+
+// ============================================================
+// PLAN DRAFTS (pre-approval, per-session)
+// ============================================================
+// Drafts live under .jonggrang/.drafts/<session-id>/plan.md — gitignored and
+// persistent (survive restart, unlike .ephemeral/). A draft is pre-approval
+// scaffolding: it has no feature_id yet (that's generated at approve from the
+// AI's feature name). Concurrent planning is safe by construction — each
+// `jonggrang plan` call gets its own session-id. Approve moves plan.md into
+// features/<feature_id>/ and discards the draft folder.
+
+function draftsDir(projectRoot) {
+  return path.join(projectRoot, '.jonggrang', '.drafts');
+}
+
+function draftFileFor(projectRoot, sessionId) {
+  if (!sessionId) throw new Error('draftFileFor: sessionId is required');
+  return path.join(draftsDir(projectRoot), sessionId, 'plan.md');
+}
+
+function draftDirFor(projectRoot, sessionId) {
+  if (!sessionId) throw new Error('draftDirFor: sessionId is required');
+  return path.join(draftsDir(projectRoot), sessionId);
+}
+
+// Clarifying-questions/answers sidecars live PER-DRAFT, colocated with plan.md
+// under .drafts/<session>/. Q&A exists before a feature_id does (that's minted
+// at approve), so the draft session-id is the natural key. Per-draft placement
+// makes concurrent planning safe — two `plan` runs no longer clobber a shared
+// root singleton — and lets `--revise`/delete clean up the Q&A with the draft.
+function questionsFileFor(projectRoot, sessionId) {
+  if (!sessionId) throw new Error('questionsFileFor: sessionId is required');
+  return path.join(draftDirFor(projectRoot, sessionId), 'plan-questions.json');
+}
+
+function answersFileFor(projectRoot, sessionId) {
+  if (!sessionId) throw new Error('answersFileFor: sessionId is required');
+  return path.join(draftDirFor(projectRoot, sessionId), 'plan-answers.json');
+}
+
+// Resolve the newest draft session carrying a pending plan-questions.json.
+// A draft mid Pass-A has questions but no plan.md yet, so resolveActiveDraft()
+// (which requires plan.md) can't see it — this scans by questions-file mtime.
+// Used by the web to relay/read questions before the plan itself is generated.
+function resolveActiveQuestionDraft(projectRoot) {
+  const dir = draftsDir(projectRoot);
+  if (!fileExists(dir)) return null;
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return null; }
+  let best = null;
+  for (const name of names) {
+    const qf = path.join(dir, name, 'plan-questions.json');
+    let st;
+    try { st = fs.statSync(qf); } catch { continue; }
+    if (!st.isFile()) continue;
+    if (!best || st.mtimeMs > best.mtime) best = { sessionId: name, mtime: st.mtimeMs };
+  }
+  return best ? best.sessionId : null;
+}
+
+/**
+ * Post-run verification for plan-writing agent calls.
+ * Ensures the draft file exists at the session path after the agent runs.
+ * If the agent wrote to the legacy root `.jonggrang/plan.md` instead of the
+ * session draftPath, auto-move it into place (self-healing) and return 'moved'.
+ * Returns: 'ok' (draft already present) | 'moved' (recovered from root) | 'missing' (not found).
+ */
+function verifyDraftWritten(projectRoot, draftFile) {
+  if (fileExists(draftFile)) return 'ok';
+  const rootPlan = path.join(projectRoot, '.jonggrang', 'plan.md');
+  if (fileExists(rootPlan)) {
+    try {
+      fs.renameSync(rootPlan, draftFile);
+      if (fileExists(draftFile)) return 'moved';
+    } catch { }
+  }
+  return 'missing';
+}
+
+// Session-id: draft-<slug>-<ts>. Visually distinct from feature folders so
+// drafts vs features are unambiguous in the .drafts/ vs features/ namespaces.
+function generateDraftId(description) {
+  const slug = (description || 'plan')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 40);
+  const ts = Date.now().toString(36);
+  return `draft-${slug}-${ts}`;
+}
+
+// List all draft sessions, newest-first by folder mtime. Each entry includes
+// parsed frontmatter (feature/description) for display.
+function getAllDrafts(projectRoot) {
+  const dir = draftsDir(projectRoot);
+  if (!fileExists(dir)) return [];
+  const out = [];
+  for (const name of fs.readdirSync(dir)) {
+    const sessionDir = path.join(dir, name);
+    let stat;
+    try { stat = fs.statSync(sessionDir); } catch { continue; }
+    if (!stat.isDirectory()) continue;
+    const planPath = path.join(sessionDir, 'plan.md');
+    if (!fileExists(planPath)) continue;
+    // Use plan.md mtime (not folder mtime) — folder mtime gets bumped by
+    // unrelated deep-plan intermediate files; plan.md mtime reflects when the
+    // plan was last written/revised, which is the right "most recent" signal.
+    let planStat;
+    try { planStat = fs.statSync(planPath); } catch { continue; }
+    let fm = { feature: '', description: '' };
+    try {
+      const content = fs.readFileSync(planPath, 'utf8');
+      const get = (k) => { const m = content.match(new RegExp(`^${k}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : ''; };
+      fm = { feature: get('feature'), description: get('description') };
+    } catch { }
+    out.push({ sessionId: name, planPath, mtime: planStat.mtime, feature: fm.feature, description: fm.description });
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+// Resolve the most-recent draft session-id (for `approve`/`status` default).
+// Returns the sessionId or null if no drafts exist.
+function resolveActiveDraft(projectRoot) {
+  const drafts = getAllDrafts(projectRoot);
+  return drafts.length > 0 ? drafts[0].sessionId : null;
+}
+
+// Migrate legacy root .jonggrang/jonggrang-tasks.json + progress.txt into
+// per-feature files under .output/features/<id>/. Called only from cmdInit.
+// Idempotent: no-op if root files don't exist.
+//
+// - Tasks: grouped by feature_id; null feature_id → synthetic legacy-<ts> folder.
+// - progress.txt: copied into every existing feature folder (learnings are
+//   global; per-feature split isn't worth the parsing complexity), then root deleted.
+// Returns { migratedTasks, migratedProgress, features: [...] } for logging.
+function migrateLegacyTaskState(projectRoot) {
+  const paths = getProjectPaths(projectRoot);
+  const featuresDir = path.join(projectRoot, '.jonggrang', '.output', 'features');
+  const legacyStamp = `legacy-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 14)}`;
+  const result = { migratedTasks: 0, migratedProgress: false, features: [] };
+
+  // ── Migrate tasks ──
+  if (fileExists(paths.tasksFile)) {
+    const data = readJSON(paths.tasksFile);
+    if (data && Array.isArray(data.tasks) && data.tasks.length > 0) {
+      fs.mkdirSync(featuresDir, { recursive: true });
+      const groups = new Map();
+      for (const task of data.tasks) {
+        const fid = task.feature_id || legacyStamp;
+        if (!groups.has(fid)) groups.set(fid, []);
+        groups.get(fid).push(task);
+      }
+      for (const [fid, tasks] of groups) {
+        const dir = path.join(featuresDir, fid);
+        fs.mkdirSync(dir, { recursive: true });
+        const tf = tasksFileFor(projectRoot, fid);
+        // Merge into any existing feature file (don't clobber)
+        const existing = fileExists(tf) ? readJSON(tf) : { tasks: [] };
+        existing.tasks = (existing.tasks || []).concat(tasks);
+        writeJSON(tf, existing);
+        result.migratedTasks += tasks.length;
+        result.features.push(fid);
+      }
+    }
+    fs.unlinkSync(paths.tasksFile);
+  }
+
+  // ── Migrate progress.txt ──
+  if (fileExists(paths.progressFile)) {
+    const content = fs.readFileSync(paths.progressFile, 'utf8');
+    if (content.trim()) {
+      fs.mkdirSync(featuresDir, { recursive: true });
+      let copied = false;
+      for (const name of fs.readdirSync(featuresDir)) {
+        const dir = path.join(featuresDir, name);
+        try { if (!fs.statSync(dir).isDirectory()) continue; } catch { continue; }
+        const pf = progressFileFor(projectRoot, name);
+        if (!fileExists(pf)) {
+          fs.writeFileSync(pf, content);
+          copied = true;
+        }
+      }
+      // If no feature folders existed, create a legacy one to hold progress
+      if (!copied) {
+        const dir = path.join(featuresDir, legacyStamp);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(progressFileFor(projectRoot, legacyStamp), content);
+        if (!result.features.includes(legacyStamp)) result.features.push(legacyStamp);
+      }
+      result.migratedProgress = true;
+    }
+    fs.unlinkSync(paths.progressFile);
+  }
+
+  return result;
+}
+
+// Migrate a legacy root .jonggrang/plan.md (pending draft) into a per-session
+// draft folder under .drafts/. Called only from cmdInit. Idempotent: no-op if
+// root plan.md doesn't exist. Returns the session-id or null.
+function migrateLegacyPlanDraft(projectRoot) {
+  const paths = getProjectPaths(projectRoot);
+  if (!fileExists(paths.legacyPlanFile)) return null;
+  let content = '';
+  try { content = fs.readFileSync(paths.legacyPlanFile, 'utf8'); } catch { return null; }
+  if (!content.trim()) { try { fs.unlinkSync(paths.legacyPlanFile); } catch { } return null; }
+
+  // Derive a session-id from the plan's feature name if present, else 'plan'
+  let featureName = 'plan';
+  try {
+    const m = content.match(/^feature:\s*(.+)$/m);
+    if (m) featureName = m[1].trim();
+  } catch { }
+  const sid = generateDraftId(featureName);
+  const draftDir = draftDirFor(projectRoot, sid);
+  fs.mkdirSync(draftDir, { recursive: true });
+  fs.copyFileSync(paths.legacyPlanFile, draftFileFor(projectRoot, sid));
+  try { fs.unlinkSync(paths.legacyPlanFile); } catch { }
+  return sid;
 }
 
 function fileExists(p) {
@@ -93,6 +403,25 @@ function checkConfig(configFile) {
   if (!fileExists(configFile)) {
     throw new Error(`.jonggrang/jonggrang.json not found. Run 'jonggrang init' first.`);
   }
+}
+
+// ── State validation ─────────────────────────────────────────
+
+function validateConfigFile(configFilePath) {
+  if (!fileExists(configFilePath)) return { valid: false, reason: 'missing' };
+  const data = readJSON(configFilePath);
+  if (!data) return { valid: false, reason: 'corrupt' };
+  if (typeof data.name !== 'string' || !data.name) return { valid: false, reason: 'missing_field', field: 'name' };
+  if (typeof data.project !== 'object' || !data.project?.stack) return { valid: false, reason: 'missing_field', field: 'project.stack' };
+  return { valid: true };
+}
+
+function validateProjectState(projectRoot) {
+  // Only config is required. Tasks/progress are per-feature and created on
+  // demand at approve time — their absence is not an error.
+  const paths = getProjectPaths(projectRoot);
+  const config = validateConfigFile(paths.configFile);
+  return { allValid: config.valid, config };
 }
 
 // ============================================================
@@ -195,37 +524,28 @@ function countTotal(tasksFile) {
 }
 
 // ── Task CRUD ─────────────────────────────────────────────────
+//
+// Task numbering is PER-FEATURE: each feature numbers its tasks from task-001.
+// addTask/addTasksBulk seed the next id from THIS feature's own tasks and detect
+// collisions within the feature. A bare id (task-005) can therefore recur across
+// features; findTaskFeature resolves it within a feature scope (explicit
+// --feature, then the active feature, then a single global match for legacy
+// globally-unique ids) — see its doc comment. Read/update/remove operate on a
+// single resolved feature file (tasksFile) — callers resolve the path first.
 
 const VALID_STATUSES = new Set(['pending', 'in_progress', 'completed', 'blocked', 'waiting', 'skipped']);
 
-function generateTaskId(tasksFile) {
-  const data = getTasks(tasksFile);
-  let maxNum = 0;
-  for (const task of data.tasks) {
-    const match = (task.id || '').match(/^task-(\d+)$/);
-    if (match) {
-      const num = parseInt(match[1], 10);
-      if (num > maxNum) maxNum = num;
-    }
-  }
-  return `task-${String(maxNum + 1).padStart(3, '0')}`;
-}
-
-function addTask(tasksFile, taskData) {
-  const data = getTasks(tasksFile);
-  const id = taskData.id || generateTaskId(tasksFile);
-
-  if (data.tasks.some(t => t.id === id)) {
-    throw new Error(`Task ${id} already exists`);
-  }
-
-  const task = {
+// Build a task object with the canonical schema. `defaultPriority` is used when
+// the caller didn't supply one. Status/timestamps/flags are set here so the
+// shape stays consistent across addTask/addTasksBulk/import paths.
+function makeTask(taskData, id, featureId, defaultPriority) {
+  return {
     id,
     title: taskData.title || '',
     description: taskData.description || '',
-    priority: taskData.priority != null ? taskData.priority : data.tasks.length + 1,
+    priority: taskData.priority != null ? taskData.priority : defaultPriority,
     status: 'pending',
-    feature_id: taskData.feature_id || null,
+    feature_id: featureId,
     skill: taskData.skill || null,
     blocked_by: taskData.blocked_by || [],
     passes: false,
@@ -234,42 +554,49 @@ function addTask(tasksFile, taskData) {
     completed_at: null,
     error_log: [],
   };
+}
 
+// Find the largest task-NNN number in a task array. Numbering is PER-FEATURE:
+// each feature numbers its own tasks from task-001, so callers pass that
+// feature's tasks (data.tasks) — NOT the global set. An append into a feature
+// continues from its own max; a fresh feature (empty) starts at task-001.
+function maxTaskNumber(tasks) {
+  let maxNum = 0;
+  for (const t of tasks) {
+    const m = (t.id || '').match(/^task-(\d+)$/);
+    if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+  }
+  return maxNum;
+}
+
+function addTask(projectRoot, featureId, taskData) {
+  const tasksFile = tasksFileFor(projectRoot, featureId);
+  const data = getTasks(tasksFile);
+  // Per-feature numbering: seed from THIS feature's own tasks (starts at 001 for
+  // a new feature; continues for an append). Collisions are checked within the feature.
+  const id = taskData.id || `task-${String(maxTaskNumber(data.tasks) + 1).padStart(3, '0')}`;
+  if (data.tasks.some(t => t.id === id)) {
+    throw new Error(`Task ${id} already exists in feature ${featureId}`);
+  }
+  const task = makeTask(taskData, id, featureId, data.tasks.length + 1);
   data.tasks.push(task);
   writeJSON(tasksFile, data);
   return task;
 }
 
-function addTasksBulk(tasksFile, taskDataArray) {
+function addTasksBulk(projectRoot, featureId, taskDataArray) {
+  const tasksFile = tasksFileFor(projectRoot, featureId);
   const data = getTasks(tasksFile);
+  // Per-feature numbering (see addTask). New feature → nextNum 0 → first id task-001;
+  // append → continues from this feature's current max.
+  let nextNum = maxTaskNumber(data.tasks);
   const created = [];
   for (const taskData of taskDataArray) {
-    const id = taskData.id || (() => {
-      let maxNum = 0;
-      for (const t of data.tasks) {
-        const m = (t.id || '').match(/^task-(\d+)$/);
-        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
-      }
-      return `task-${String(maxNum + 1).padStart(3, '0')}`;
-    })();
-    if (data.tasks.some(t => t.id === id)) {
-      throw new Error(`Task ${id} already exists`);
+    const id = taskData.id || `task-${String(++nextNum).padStart(3, '0')}`;
+    if (data.tasks.some(t => t.id === id) || created.some(t => t.id === id)) {
+      throw new Error(`Task ${id} already exists in feature ${featureId}`);
     }
-    const task = {
-      id,
-      title: taskData.title || '',
-      description: taskData.description || '',
-      priority: taskData.priority != null ? taskData.priority : data.tasks.length + 1,
-      status: 'pending',
-      feature_id: taskData.feature_id || null,
-      skill: taskData.skill || null,
-      blocked_by: taskData.blocked_by || [],
-      passes: false,
-      files: taskData.files || [],
-      started_at: null,
-      completed_at: null,
-      error_log: [],
-    };
+    const task = makeTask(taskData, id, featureId, data.tasks.length + 1);
     data.tasks.push(task);
     created.push(task);
   }
@@ -401,6 +728,81 @@ function getTestCommand(framework) {
 // PROMPT BUILDERS
 // ============================================================
 
+/**
+ * Derive projectRoot from a config or tasks file path. Falls back to cwd.
+ * Used by prompt builders that don't get projectRoot as a direct arg.
+ */
+function _projectRootFromPath(p) {
+  if (!p) return process.cwd();
+  try {
+    // Resolve to absolute first; then strip .jonggrang/<file> → project root.
+    const abs = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
+    // path.dirname(abs) → ends in .jonggrang → dirname again → project root
+    return path.dirname(path.dirname(abs));
+  } catch { return process.cwd(); }
+}
+
+/**
+ * Build the project context block for a prompt. Tries the codemap (LLM-free,
+ * cached at .jonggrang/codemap/codemap.json) first and falls back to the
+ * legacy "embed config + tell agent to read AGENTS.md" approach when the
+ * codemap is unavailable.
+ *
+ * @param {string} projectRootOrConfigFile path to .jonggrang/jonggrang.json,
+ *                                         .jonggrang/jonggrang-tasks.json, or
+ *                                         an explicit project root
+ * @param {object} [opts]
+ * @param {number} [opts.maxChars=4500]    cap for the codemap section
+ * @param {string} [opts.configFile]       optional: legacy fallback config
+ * @returns {string}                       markdown block
+ */
+function buildProjectContext(projectRootOrConfigFile, opts = {}) {
+  const maxChars = opts.maxChars != null ? opts.maxChars : 4500;
+  // If the path looks like a file inside .jonggrang/, strip two dirs; otherwise treat as root.
+  let projectRoot = projectRootOrConfigFile;
+  if (projectRoot && /\.jonggrang[\\/]/.test(projectRoot)) {
+    projectRoot = _projectRootFromPath(projectRoot);
+  }
+  if (!projectRoot) projectRoot = process.cwd();
+
+  let block = '';
+
+  try {
+    const codemap = require('./codemap');
+    const { codemap: cm, stale } = codemap.getOrGenerateCodemap(projectRoot);
+    if (cm) {
+      block = `## Project Context (codemap)\n\n${codemap.formatCodemapMarkdown(cm, { maxChars })}`;
+      if (stale) {
+        block += `\n\n> ⚠️ Codemap may be outdated (project changed since ${cm.generatedAt}). Run \`jonggrang codemap --refresh\` to update.`;
+      }
+    }
+  } catch { /* fall through to legacy */ }
+
+  if (!block) {
+    // Legacy fallback — embed raw config and tell the agent to read AGENTS.md.
+    let configSection = '';
+    if (opts.configFile && fileExists(opts.configFile)) {
+      const cfg = readJSON(opts.configFile);
+      if (cfg) configSection = `## Project Config\n\`\`\`json\n${JSON.stringify(cfg, null, 2)}\n\`\`\`\n`;
+    }
+    block = `## Project Context\n${configSection}- Read AGENTS.md for project conventions\n- Check existing code structure with ls/find if needed`;
+  }
+
+  return block;
+}
+
+function buildBaseBranchContext(branchToUse) {
+  return `## Base Branch Context
+- Read AGENTS.md for project conventions
+- Explore the codebase to understand existing structure on the base branch \`${branchToUse}\`.
+  If the current branch differs from \`${branchToUse}\`, you must query the base branch files using \`git show\`.
+  Because \`${branchToUse}\` may only exist on the remote (e.g. if the local branch hasn't been checked out yet), follow these steps to read a file from the base branch safely:
+  1. Check if the local ref exists: run \`git rev-parse --verify ${branchToUse}\` (checking stdout/exit status).
+  2. If local verification succeeds, query/read the file with: \`git show ${branchToUse}:<path>\`.
+  3. If local verification fails, use the remote ref: query/read the file with \`git show origin/${branchToUse}:<path>\`. If this fails or the remote ref is not found, run \`git fetch origin ${branchToUse}\` first, then run \`git show origin/${branchToUse}:<path>\`.
+  Do NOT fallback to reading current local files directly if the base branch differs, as they may contain uncommitted or unrelated changes.`;
+}
+
 function buildWorkPrompt(taskId, tasksFile, mode, testFeedback) {
   const task = getTask(tasksFile, taskId);
   if (!task) return '';
@@ -420,11 +822,16 @@ function buildWorkPrompt(taskId, tasksFile, mode, testFeedback) {
     : '';
 
   const featureId = task.feature_id || null;
+  const progressPath = featureId
+    ? `.jonggrang/.output/features/${featureId}/progress.txt`
+    : '.jonggrang/progress.txt';
   const bugCmd = featureId
     ? `jonggrang bug "description" --feature ${featureId}`
     : `jonggrang bug "description"`;
 
   return `# Jonggrang Work Session${revisionSection}
+
+${buildProjectContext(tasksFile, { maxChars: 3000 })}
 
 ## Current Task
 - ID: ${taskId}
@@ -436,10 +843,12 @@ function buildWorkPrompt(taskId, tasksFile, mode, testFeedback) {
 ## Context Files
 Read these files for additional context before starting:
 - AGENTS.md (project conventions)
-- .jonggrang/progress.txt (learnings from previous sessions)${featureId ? `\n- .jonggrang/.output/features/${featureId}/plan.md (feature plan — archived after approval, do NOT read .jonggrang/plan.md)` : ''}
+- ${progressPath} (learnings from previous sessions)${featureId ? `\n- .jonggrang/.output/features/${featureId}/plan.md (feature plan — archived after approval, do NOT read .jonggrang/plan.md)` : ''}
 Note: .jonggrang/plan.md does not exist during execution — the plan was archived to the path above after approval.
 
-## Task CLI — use these commands, do NOT read jonggrang-tasks.json directly
+${memory.buildMemoryPolicyPrompt('work', { featureId: featureId || null, taskId })}
+
+## Task CLI — use these commands, do NOT read the tasks file directly
 \`\`\`bash
 jonggrang task show ${taskId}          # full detail of current task
 jonggrang task list                    # see all tasks and their statuses
@@ -456,9 +865,19 @@ jonggrang task update ${taskId} --files src/foo.ts,src/bar.ts  # record files to
 3. ${skillLine}
 4. Implement the task
 5. Run validation: typecheck, tests, lint
-6. If all pass, commit with message format: "type(scope): description". Stage ONLY the code/files your task changed — never \`git add\` \`.jonggrang/\` or \`node_modules/\` (jonggrang state and dependencies must stay out of feature branches; prefer \`git add <specific files>\` over \`git add -A\`/\`git add .\`). Always add a trailing blank line then "${COAUTHOR_TRAILER}" as the last line of the commit message.
+6. If all pass, commit using the **structured commit convention** (agent commits are a contract — see docs/COMMIT-CONVENTION.md). Stage ONLY the code/files your task changed — never \`git add\` \`.jonggrang/\` or \`node_modules/\` (jonggrang state and dependencies must stay out of feature branches; prefer \`git add <specific files>\` over \`git add -A\`/\`git add .\`). Use this message format (all 5 fields required — use "none" if genuinely N/A):
+   \`\`\`
+   <type>: <summary>
+
+   Context: <feature/plan this belongs to, narrative — not an ID>
+   What: <the change intent in prose — do NOT list files, MANIFEST tracks what/where>
+   Why: <rationale for the change>
+   Tradeoff: <what was sacrificed or "none">
+   Caveats: <what the next agent should know — incomplete work, fragile code, follow-up — or "none">
+   \`\`\`
+   Always add a trailing blank line then "${COAUTHOR_TRAILER}" as the last line — its presence marks this as an agent commit and triggers convention validation.
 7. Mark task done: \`jonggrang task done ${taskId}\`
-8. Append learnings to .jonggrang/progress.txt
+8. Append learnings to ${progressPath}
 
 ## Bug Reporting
 If you discover a bug that is OUTSIDE the scope of the current task:
@@ -473,7 +892,7 @@ ${bugCmd}
 ## Important
 - Keep changes atomic — only modify files relevant to this task
 - Follow conventions in AGENTS.md
-- If you discover new patterns or gotchas, note them in .jonggrang/progress.txt
+- If you discover new patterns or gotchas, note them in ${progressPath}
 - If validation fails and you can't fix it in 2 attempts, stop and report the error
 `;
 }
@@ -484,45 +903,50 @@ ${bugCmd}
 
 /**
  * Build a prompt for Phase 1: generate a human-readable plan.md draft.
- * The AI writes .jonggrang/plan.md but does NOT touch jonggrang-tasks.json.
+ * The AI writes the draft to `draftPath` but does NOT touch jonggrang-tasks.json.
  */
-function buildDraftPlanPrompt(description, configFile, tasksFile) {
+function buildDraftPlanPrompt(description, configFile, projectRoot, draftPath, srcPath = null, opts = {}) {
+  const branchToUse = opts.baseBranch || (projectRoot ? resolveBaseBranch(projectRoot) : 'main');
   let configSection = '';
   if (configFile && fileExists(configFile)) {
     const cfg = readJSON(configFile);
     if (cfg) configSection = `## Project Config\n\`\`\`json\n${JSON.stringify(cfg, null, 2)}\n\`\`\`\n`;
   }
 
-  // Only embed completed tasks — to prevent re-doing finished work
+  // When the user has already answered the agent's clarifying questions, inject
+  // them as authoritative context so the plan reflects the real intent.
+  const clarSection = opts.clarifications
+    ? `## Clarifications from User (authoritative — do NOT ask again)\n${opts.clarifications}\n\n`
+    : '';
+
+  // Only embed completed tasks (across all features) — to prevent re-doing finished work
   let completedSection = '';
-  if (tasksFile && fileExists(tasksFile)) {
-    const data = getTasks(tasksFile);
-    const done = (data.tasks || []).filter(t => t.status === 'completed');
-    if (done.length > 0) {
-      completedSection = `## Already Completed Work\nDo NOT plan to redo these:\n${done.map(t => `- ${t.id}: ${t.title}`).join('\n')}\n`;
-    }
+  const allTasks = getAllTasks(projectRoot);
+  const done = allTasks.tasks.filter(t => t.status === 'completed');
+  if (done.length > 0) {
+    completedSection = `## Already Completed Work\nDo NOT plan to redo these:\n${done.map(t => `- ${t.id}: ${t.title}`).join('\n')}\n`;
   }
 
   const now = new Date().toISOString();
 
   return `# Jonggrang — Generate Draft Plan
 
-## Feature Description
-${description}
+${buildFeatureSection(description, srcPath)}
 
-## Project Context
-${configSection}${completedSection}
-- Read AGENTS.md for project conventions
-- Check existing code structure with ls/find if needed
+${buildProjectContext(configFile, { maxChars: 3000 })}
 
-## Your Task
+${buildBaseBranchContext(branchToUse)}
+${memory.buildMemoryPolicyPrompt('plan')}
 
-Create a high-level plan for this feature. Write it to \`.jonggrang/plan.md\` using EXACTLY this format:
+${completedSection}${clarSection}## Your Task
+
+Create a high-level plan for this feature. Write it to \`${draftPath}\` using EXACTLY this format:
 
 \`\`\`
 ---
 feature: short-kebab-case-name
 branch: feat/short-kebab-case-name
+base: "${branchToUse}"
 work_type: BUGFIX|SMALL|MEDIUM|LARGE
 description: one-line summary of the feature
 created_at: ${now}
@@ -554,8 +978,113 @@ Existing code, services, or patterns this builds on. Write "None" if not applica
 - work_type: BUGFIX=fix existing behavior, SMALL=1-3 files, MEDIUM=new feature module, LARGE=subsystem/cross-service
 - 3-8 phases max — keep them high-level, not detailed task steps
 - Do NOT write code or file-level implementation details
-- Do NOT write to \`.jonggrang/jonggrang-tasks.json\` — tasks come in Phase 2 after human review
-- After writing plan.md, output exactly: "Draft plan written to .jonggrang/plan.md"`;
+- Do NOT write to the tasks file — tasks come in Phase 2 after human review
+- After writing the plan, output exactly: "Draft plan written to ${draftPath}"`;
+}
+
+/**
+ * Build a prompt to EXTEND an existing approved plan (feature `featureId`) with
+ * additional scope. The agent writes a delta draft to `draftPath` describing ONLY
+ * the new work; on approve the delta is decomposed into ADDITIONAL tasks appended
+ * to the existing feature (numbering continues, existing/completed tasks untouched).
+ * The draft carries `append_to: <featureId>` so approve routes it to the feature.
+ */
+function buildAppendPlanPrompt(additionalScope, existingPlanContent, existingTasks, configFile, projectRoot, draftPath, featureId, opts = {}) {
+  const fm = (() => {
+    const m = (existingPlanContent || '').match(/^---\n([\s\S]*?)\n---/);
+    if (!m) return {};
+    const yaml = require('js-yaml');
+    try { return yaml.load(m[1]) || {}; } catch { return {}; }
+  })();
+  const featureSlug = fm.feature || featureId;
+  const branch = fm.branch || `feat/${featureSlug}`;
+  const branchToUse = opts.baseBranch || fm.base || (projectRoot ? resolveBaseBranch(projectRoot) : 'main');
+  const taskLines = (existingTasks || [])
+    .map(t => `- ${t.id} [${t.status}] ${t.title}`).join('\n');
+  const now = new Date().toISOString();
+
+  // Deep pre-pass output (discovery + analysis on the additional scope). When
+  // present, the extension plan is enriched with concrete file paths / risks /
+  // alternatives and `depth: deep` in the frontmatter.
+  const deep = opts.deep && (opts.deep.discovery || opts.deep.analysis) ? opts.deep : null;
+  const deepSection = deep
+    ? `\n## Deep Analysis (from discovery + brainstorm on the additional scope)\n### Discovery\n${(deep.discovery || '(none)').trim()}\n\n### Analysis\n${(deep.analysis || '(none)').trim()}\n`
+    : '';
+  const deepFrontmatter = deep ? '\ndepth: deep' : '';
+  const deepSectionsSpec = deep
+    ? `
+
+## Affected Areas
+- Concrete files/modules the additional work touches (from discovery)
+
+## Risks
+- Risk → mitigation
+
+## Alternatives Considered
+- Option considered and why it was rejected`
+    : '';
+  const deepRule = deep
+    ? '\n- This is a DEEP extension: ground Approach/Phases in the discovery findings, and include the Affected Areas / Risks / Alternatives sections + `depth: deep` in the frontmatter.'
+    : '';
+
+  return `# Jonggrang — Extend an Existing Plan${deep ? ' (Deep)' : ''}
+
+${buildProjectContext(configFile, { maxChars: 2500 })}
+
+${buildBaseBranchContext(branchToUse)}
+${memory.buildMemoryPolicyPrompt('plan', { featureId })}
+
+## Existing Plan (already approved — context only; do NOT redo its work)
+\`\`\`markdown
+${(existingPlanContent || '').trim()}
+\`\`\`
+
+## Existing Tasks in this Plan (already decomposed — do NOT repeat these)
+${taskLines || '(none)'}
+
+## Additional Scope to Add
+${additionalScope}
+${deepSection}
+## Your Task
+Write a plan for ONLY the ADDITIONAL scope above — the new work to append onto the
+existing plan. Do NOT restate or redo anything already covered. Write it to
+\`${draftPath}\` using EXACTLY this format:
+
+\`\`\`
+---
+feature: ${featureSlug}
+branch: ${branch}
+base: "${branchToUse}"
+work_type: BUGFIX|SMALL|MEDIUM|LARGE
+description: one-line summary of the ADDITIONAL scope
+append_to: ${featureId}${deepFrontmatter}
+created_at: ${now}
+---
+
+# Plan: ${featureSlug} — Extension
+
+## Approach
+2-4 sentences: what the additional work is and how it builds on the existing plan.
+
+## Phases
+1. Phase name — what happens (only the new work)
+...
+
+## Key Decisions
+- Decision: choice + brief rationale
+
+## Out of Scope
+- What is NOT included
+
+## Dependencies
+Builds on the existing plan's work.${deepSectionsSpec}
+\`\`\`
+
+## Rules
+- Plan ONLY the additional scope. The existing tasks above are done/decomposed already — never re-plan them.
+- Keep the frontmatter \`feature\`/\`branch\`/\`base\` identical to the existing plan, and keep \`append_to: ${featureId}\` exactly as shown.
+- 3-8 phases max, high-level; do NOT write code or the tasks file.${deepRule}
+- After writing the plan, output exactly: "Draft plan written to ${draftPath}"`;
 }
 
 // ============================================================
@@ -563,11 +1092,18 @@ Existing code, services, or patterns this builds on. Write "None" if not applica
 // ============================================================
 
 /**
- * Build a prompt to revise an existing plan.md based on user feedback.
- * The AI rewrites plan.md in-place, preserving frontmatter unless explicitly changed.
+ * Build a prompt to revise an existing draft plan based on user feedback.
+ * The AI rewrites the draft at `draftFile` in-place, preserving frontmatter unless explicitly changed.
  */
-function buildRevisePlanPrompt(currentPlanContent, feedback) {
+function buildRevisePlanPrompt(currentPlanContent, feedback, draftFile, opts = {}) {
+  const clarSection = opts.clarifications
+    ? `\n## Earlier Clarifications from User (still authoritative)\n${opts.clarifications}\n`
+    : '';
   return `# Jonggrang — Revise Draft Plan
+
+${buildProjectContext(process.cwd(), { maxChars: 2500 })}
+
+${memory.buildMemoryPolicyPrompt('plan')}
 
 ## Current plan.md
 \`\`\`markdown
@@ -576,7 +1112,7 @@ ${currentPlanContent}
 
 ## User Feedback
 ${feedback}
-
+${clarSection}
 ## Your Task
 
 Revise the plan above based on the user feedback.
@@ -586,8 +1122,8 @@ Rules:
 - Update the plan body: Approach, Phases, Key Decisions, Out of Scope, Dependencies
 - Keep the exact same markdown structure and section headings
 - Do NOT change work_type unless the user explicitly asks
-- Write the revised plan to \`.jonggrang/plan.md\` (overwrite the file)
-- After writing, output exactly: "Revised plan written to .jonggrang/plan.md"`;
+- Write the revised plan to \`${draftFile}\` (overwrite the file)
+- After writing, output exactly: "Revised plan written to ${draftFile}"`;
 }
 
 // ============================================================
@@ -598,7 +1134,7 @@ Rules:
  * Build a prompt for Phase 2: convert an approved plan.md into jonggrang-tasks.json.
  * planContent is the raw text of the approved plan.md.
  */
-function buildTasksFromPlanPrompt(planContent, configFile, tasksFile, skillsDir) {
+function buildTasksFromPlanPrompt(planContent, configFile, projectRoot, featureId, skillsDir) {
   let skillsList = '';
   if (skillsDir && fileExists(skillsDir)) {
     skillsList = findSkills(skillsDir).join(', ');
@@ -610,20 +1146,30 @@ function buildTasksFromPlanPrompt(planContent, configFile, tasksFile, skillsDir)
     if (cfg) configSection = `## Project Config\n\`\`\`json\n${JSON.stringify(cfg, null, 2)}\n\`\`\`\n`;
   }
 
+  // Per-feature numbering: each plan numbers its tasks from task-001. Show only
+  // THIS plan's existing tasks so the agent numbers correctly — a fresh plan
+  // starts at task-001; an append (this plan already has tasks) continues from
+  // this plan's own max and never renumbers what's already there.
+  const featureTasks = featureId
+    ? getAllTasks(projectRoot).tasks.filter(t => t.feature_id === featureId)
+    : [];
   let currentTasksSection = '';
   let updateNote = '';
-  if (tasksFile && fileExists(tasksFile)) {
-    const data = getTasks(tasksFile);
-    if (data.tasks?.length > 0) {
-      currentTasksSection = `## Existing Tasks (jonggrang-tasks.json)\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
-      const completedCount = data.tasks.filter(t => t.status === 'completed').length;
-      if (completedCount > 0) {
-        updateNote = `\n## ⚠️ UPDATE MODE\n${completedCount} tasks already completed — NEVER modify or remove them. Append new tasks after the last existing ID.\n`;
-      }
-    }
+  if (featureTasks.length > 0) {
+    const existingIds = featureTasks.map(t => t.id).join(', ');
+    const nextId = `task-${String(maxTaskNumber(featureTasks) + 1).padStart(3, '0')}`;
+    const completedInFeature = featureTasks.filter(t => t.status === 'completed').length;
+    currentTasksSection = `## Existing Tasks in THIS Plan (do NOT renumber or modify these)\n${existingIds}\nNext id to use: ${nextId}\n`;
+    updateNote = `\n## ⚠️ APPEND MODE\nThis plan already has ${featureTasks.length} task(s)${completedInFeature ? ` (${completedInFeature} completed)` : ''}. Append NEW tasks only, starting at ${nextId}. NEVER modify, remove, or renumber existing tasks; completed tasks are immutable.\n`;
   }
 
+  const featureFlag = featureId ? ` --feature ${featureId}` : '';
+
   return `# Jonggrang — Decompose Approved Plan to Tasks
+
+${buildProjectContext(configFile, { maxChars: 2500 })}
+
+${memory.buildMemoryPolicyPrompt('approve', { featureId })}
 
 ## Approved Plan
 \`\`\`markdown
@@ -640,11 +1186,11 @@ ${skillsList || '(none configured)'}
 ## Your Task
 Decompose every phase from the approved plan above into detailed implementation tasks.
 
-**Use the CLI to add tasks — do NOT edit jonggrang-tasks.json directly.**
+**Use the CLI to add tasks — do NOT edit the tasks file directly.**
 
 Run this single command to add all tasks at once:
 \`\`\`bash
-jonggrang task import --input '<JSON array of task objects>'
+jonggrang task import${featureFlag} --input '<JSON array of task objects>'
 \`\`\`
 
 Each task object in the array must follow this schema:
@@ -661,7 +1207,8 @@ Each task object in the array must follow this schema:
 \`\`\`
 
 ## Rules
-- Always include "id" (task-001, task-002, ...) so blocked_by references work correctly
+- Task numbering is PER-PLAN. For a NEW plan (no existing tasks shown above), number tasks starting at task-001. If this plan already has tasks (APPEND MODE above), continue from the "Next id to use" — do NOT restart at task-001 and do NOT renumber existing tasks.
+- Always include "id" (task-001, task-002, ...) so blocked_by references work correctly. blocked_by must reference ids within THIS plan only.
 - Each task must be completable in a single AI context window
 - Description must be detailed enough to implement without ambiguity
 - Use blocked_by to encode phase dependencies using the "id" values you defined
@@ -689,15 +1236,15 @@ function buildPlanPrompt(description, updateMode, tasksFile, skillsDir, configFi
   let updateInstructions = '';
   if (fileExists(tasksFile)) {
     const data = getTasks(tasksFile);
-    currentTasksSection = `## Current Tasks (jonggrang-tasks.json)\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
+    currentTasksSection = `## Current Tasks\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
 
     if (updateMode && data.tasks?.length) {
       const completedCount = data.tasks.filter(t => t.status === 'completed').length;
-      const pendingCount   = data.tasks.filter(t => t.status === 'pending').length;
-      const totalCount     = data.tasks.length;
+      const pendingCount = data.tasks.filter(t => t.status === 'pending').length;
+      const totalCount = data.tasks.length;
       updateInstructions = `
 ## UPDATE MODE
-This is a plan UPDATE, not a fresh plan. jonggrang-tasks.json already has ${totalCount} tasks (${completedCount} completed, ${pendingCount} pending).
+This is a plan UPDATE, not a fresh plan. The tasks file already has ${totalCount} tasks (${completedCount} completed, ${pendingCount} pending).
 
 Rules for update mode:
 - NEVER remove or modify tasks with status "completed" — they are done
@@ -712,6 +1259,8 @@ Rules for update mode:
   }
 
   return `# Jonggrang Plan — Decompose Feature
+
+${buildProjectContext(configFile, { maxChars: 3000 })}
 
 ## Feature Description
 ${description}
@@ -732,7 +1281,7 @@ ${updateInstructions}
    - Has a clear, detailed description with acceptance criteria
    - Specifies which files will be created or modified
    - Has dependency ordering (blocked_by) if it depends on other tasks
-3. Write the tasks directly to .jonggrang/jonggrang-tasks.json using this exact schema:
+3. Write the tasks directly to \`${tasksFile}\` using this exact schema:
 
 \`\`\`json
 {
@@ -769,11 +1318,15 @@ ${updateInstructions}
    - priority: 1 = highest (do first), 2 = next, etc.
    - Create as many tasks as needed to fully cover the feature — do not artificially limit the number
 
-5. After writing .jonggrang/jonggrang-tasks.json, report the plan summary`;
+5. After writing the tasks file, report the plan summary`;
 }
 
 function buildReviewPrompt() {
   return `# Jonggrang Review Session
+
+${buildProjectContext(process.cwd(), { maxChars: 3000 })}
+
+${memory.buildMemoryPolicyPrompt('review')}
 
 ## Instructions
 1. Read AGENTS.md for project conventions
@@ -817,10 +1370,19 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
   const debug = Boolean(options.debug);
   const model = options.model || '';
   const effort = options.effort || '';
+  const captureText = Boolean(options.captureText);
+  // Accumulated text output when captureText is true; null otherwise.
+  const textChunks = captureText ? [] : null;
 
   // Validate model/effort flags early (throws on invalid combos, e.g. bare
   // model name for OpenCode) and translate to backend-specific argv fragments.
   const extraFlags = buildAgentArgs({ tool, model, effort });
+
+  // When captureText is on, resolve with { code, text } instead of a plain number.
+  function finish(code) {
+    const c = code || 0;
+    return captureText ? { code: c, text: textChunks.join('') } : c;
+  }
 
   function debugLine(line) {
     if (!debug) return;
@@ -857,16 +1419,17 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
           if (text) {
             process.stdout.write(text);
             atLineStart = text.endsWith('\n');
+            if (textChunks) textChunks.push(text);
           }
         } else if (obj.type === 'tool_use') {
-          const part   = obj.part || {};
+          const part = obj.part || {};
           const toolId = part.id || null;
           const toolName = part.tool || '?';
-          const state  = part.state || {};
-          const input  = state.input || {};
+          const state = part.state || {};
+          const input = state.input || {};
 
           const hasOutput = state.output !== undefined;
-          const hasError  = state.error  !== undefined;
+          const hasError = state.error !== undefined;
 
           // Completion update for a tool we already printed
           if (toolId && printedTools.has(toolId) && (hasOutput || hasError)) {
@@ -929,7 +1492,7 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
         if (totalCost > 0) {
           process.stdout.write(`\x1b[2m[cost: $${totalCost.toFixed(4)}]\x1b[0m\n`);
         }
-        resolve(code || 0);
+        resolve(finish(code));
       });
 
     } else if (tool === 'claude') {
@@ -999,6 +1562,7 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
             if (delta.type === 'text_delta' && !inToolBlock) {
               process.stdout.write(delta.text);
               atLineStart = delta.text.endsWith('\n');
+              if (textChunks) textChunks.push(delta.text);
             } else if (delta.type === 'input_json_delta' && inToolBlock) {
               toolInputBuffer += delta.partial_json || '';
             }
@@ -1050,7 +1614,7 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
         if (finalCost > 0) parts.push(`cost: $${finalCost.toFixed(4)}`);
         if (inputTokens > 0 || outputTokens > 0) parts.push(`tokens: ${inputTokens}↑ ${outputTokens}↓`);
         if (parts.length > 0) process.stdout.write(`\x1b[2m[${parts.join(' · ')}]\x1b[0m\n`);
-        resolve(streamError ? 1 : (code || 0));
+        resolve(finish(streamError ? 1 : (code || 0)));
       });
 
     } else if (tool === 'jonggrang') {
@@ -1073,7 +1637,7 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
             const slash = trimmed.indexOf('/');
             if (slash !== -1) {
               const provider = trimmed.substring(0, slash).trim();
-              const modelId  = trimmed.substring(slash + 1).trim();
+              const modelId = trimmed.substring(slash + 1).trim();
               if (provider && modelId) {
                 const pm = availableModels.filter(m =>
                   m.provider.toLowerCase() === provider.toLowerCase() &&
@@ -1100,7 +1664,7 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
           }
           if (!resolvedModel) {
             const cfgProvider = readConfig(path.join(projectRoot, '.jonggrang', 'jonggrang.json'), 'provider', '');
-            const cfgModelId  = readConfig(path.join(projectRoot, '.jonggrang', 'jonggrang.json'), 'model', '');
+            const cfgModelId = readConfig(path.join(projectRoot, '.jonggrang', 'jonggrang.json'), 'model', '');
             if (cfgProvider && cfgModelId) resolvedModel = modelRegistry.find(cfgProvider, cfgModelId);
           }
 
@@ -1123,6 +1687,7 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
               if (ae?.type === 'text_delta' && ae.delta) {
                 process.stdout.write(ae.delta);
                 atLineStart = ae.delta.endsWith('\n');
+                if (textChunks) textChunks.push(ae.delta);
               }
             } else if (event.type === 'tool_execution_start') {
               // Pi SDK: event.toolName (string) and event.args (object)
@@ -1147,12 +1712,12 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
           // Previously this branch called process.exit(0), which killed the
           // worktree work-loop after a single task (you had to click Run again
           // for each subsequent task). The CLI now exits once in main().
-          try { session?.dispose(); } catch {}
-          resolve(0);
+          try { session?.dispose(); } catch { }
+          resolve(finish(0));
         } catch (err) {
           process.stderr.write(`[jonggrang] error: ${err.message}\n`);
-          try { session?.dispose(); } catch {}
-          resolve(1);
+          try { session?.dispose(); } catch { }
+          resolve(finish(1));
         }
       })();
 
@@ -1195,10 +1760,11 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
               if (c.type === 'output_text') {
                 process.stdout.write(c.text || '');
                 atLineStart = (c.text || '').endsWith('\n');
+                if (textChunks && c.text) textChunks.push(c.text);
               }
             }
           } else if (item.type === 'function_call') {
-            const name   = item.name || '?';
+            const name = item.name || '?';
             const args = (() => {
               try { return JSON.parse(item.arguments || '{}'); }
               catch (err) {
@@ -1236,11 +1802,11 @@ function runAgent(prompt, tool, permMode, projectRoot, options = {}) {
       child.on('close', (code) => {
         if (buffer.trim()) handleCodexLine(buffer);
         if (!atLineStart) process.stdout.write('\n');
-        resolve(code || 0);
+        resolve(finish(code));
       });
 
     } else {
-      resolve(1);
+      resolve(finish(1));
     }
   });
 }
@@ -1363,7 +1929,7 @@ function generateConfig(options) {
       max_team_size: parseInt(teamSize, 10),
     },
     work: {
-      max_iterations: 10,
+      max_iterations: 0,
       retry_limit: 2,
       kill_after_fails: 3,
       branch_prefix: 'feat/',
@@ -1388,8 +1954,8 @@ function generateConfig(options) {
     },
     skills: {
       directory: tool === 'opencode' ? './.opencode/skills'
-               : tool === 'codex'    ? './.codex/skills'
-               : './.claude/skills',
+        : tool === 'codex' ? './.codex/skills'
+          : './.claude/skills',
       custom: [],
     },
     review: {
@@ -1400,7 +1966,7 @@ function generateConfig(options) {
   };
 }
 
-function runInit(options, jonggrangHome, projectRoot) {
+function runInit(options, jonggrangHome, projectRoot, opts = {}) {
   const { name, type, stack, tool, testing, ci } = options;
   const paths = getProjectPaths(projectRoot);
   const testCmd = getTestCommand(testing);
@@ -1487,12 +2053,15 @@ function runInit(options, jonggrangHome, projectRoot) {
     }
   }
 
-  // 3. jonggrang-tasks.json
-  writeJSON(paths.tasksFile, { feature: '', branch: '', tasks: [] });
+  // 3. Task state — per-feature now. Migrate any legacy root file instead of
+  // creating a new root tasks.json. On a fresh repo there's nothing to migrate.
+  const migration = migrateLegacyTaskState(projectRoot);
+  // Migrate any legacy root plan.md (pending draft) → per-session draft folder.
+  const migratedDraft = migrateLegacyPlanDraft(projectRoot);
+  migration.migratedDraft = migratedDraft;
 
-  // 4. progress.txt
-  const now = new Date().toISOString().split('T')[0];
-  fs.writeFileSync(paths.progressFile, `# Jonggrang Progress Log — ${name}\n# Created: ${now}\n`);
+  // 4. progress.txt — per-feature now. Handled by migrateLegacyTaskState above
+  // (copied into each feature folder). Nothing to write on a fresh repo.
 
   // 5. Copy skills into tool-specific directories
   const jonggrangSkillsDir = path.join(jonggrangHome, 'skills');
@@ -1568,7 +2137,16 @@ function runInit(options, jonggrangHome, projectRoot) {
     } catch { /* ignore */ }
   }
 
-  return { skillCount };
+  // 8. Pre-generate codebase map (LLM-free, deterministic).
+  // Gives every fresh-context agent an immediate project orientation
+  // without spending tool calls on `ls` / `find`. Mirrors pi-compass.
+  let codemapGenerated = false;
+  try {
+    require('./codemap').getOrGenerateCodemap(projectRoot, { force: true });
+    codemapGenerated = true;
+  } catch { /* best-effort */ }
+
+  return { skillCount, codemapGenerated };
 }
 
 // ============================================================
@@ -1669,6 +2247,91 @@ function parsePlanFrontmatter(planPath) {
   }
 }
 
+// A base branch name we consider safe to interpolate into a shell command
+// (`git fetch origin "<base>"`) and into a YAML scalar. Letters, digits, dot,
+// slash, dash, underscore only; must not lead with `-` or `.` (option/relative
+// ref hazards). Intentionally stricter than git's own ref grammar — the point is
+// that a value passing this check carries NO shell metacharacters, quotes, or
+// whitespace, so every interpolation downstream (resolveStartRef, setPlanBase)
+// is injection-safe regardless of where the value came from (CLI, web API, or
+// frontmatter written by the AI / committed plan.md).
+function isSafeBranchName(name) {
+  return typeof name === 'string'
+    && name.length > 0 && name.length <= 200
+    && /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/.test(name);
+}
+
+// Set (or replace) the `base:` branch field inside a plan.md's YAML frontmatter.
+// The base branch (which branch the worktree is cut from) is a deterministic
+// user choice, NOT something the AI decides — so we write it after generation.
+// Rejects unsafe names (see isSafeBranchName) so a malicious --base / frontmatter
+// value can never reach the fetch shell. Returns true only if the file was
+// updated; false on invalid input, missing frontmatter, or write error.
+function setPlanBase(planPath, base) {
+  if (!isSafeBranchName(base)) return false;
+  try {
+    const raw = fs.readFileSync(planPath, 'utf8');
+    const m = raw.match(/^(---\n)([\s\S]*?)(\n---)/);
+    if (!m) return false;
+    let body = m[2];
+    // Quote the scalar so branch names that look like YAML keywords (true, no,
+    // 123, 0x1f) survive js-yaml parsing as strings. Safe to embed bare: the
+    // value passed isSafeBranchName, so it contains no `"`.
+    const line = `base: "${base}"`;
+    if (/^base:.*$/m.test(body)) {
+      body = body.replace(/^base:.*$/m, line);
+    } else if (/^branch:.*$/m.test(body)) {
+      body = body.replace(/^(branch:.*)$/m, `$1\n${line}`);
+    } else {
+      body = `${body}\n${line}`;
+    }
+    fs.writeFileSync(planPath, m[1] + body + m[3] + raw.slice(m.index + m[0].length), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Set (or replace) a safe scalar field in a plan.md's YAML frontmatter. Used for
+// machine-written fields the platform controls (e.g. `append_to: <featureId>`),
+// never free text — the value must be a safe token (isSafeBranchName). Returns
+// true only if the file was updated.
+function setPlanFrontmatterField(planPath, key, value) {
+  if (!/^[a-z_]+$/.test(key) || !isSafeBranchName(value)) return false;
+  try {
+    const raw = fs.readFileSync(planPath, 'utf8');
+    const m = raw.match(/^(---\n)([\s\S]*?)(\n---)/);
+    if (!m) return false;
+    let body = m[2];
+    const line = `${key}: "${value}"`;
+    const re = new RegExp(`^${key}:.*$`, 'm');
+    body = re.test(body) ? body.replace(re, line) : `${body}\n${line}`;
+    fs.writeFileSync(planPath, m[1] + body + m[3] + raw.slice(m.index + m[0].length), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// List candidate base branches (local heads + origin remote-tracking refs,
+// deduped to short names) plus the resolved default. Host-side, read-only — it
+// works for sandbox projects too (the .git is bind-mounted) and needs no network
+// or container. Worktree creation fetches the chosen base for freshness.
+function listBranches(projectRoot) {
+  const collect = (ref) => {
+    try {
+      return execSync(`git for-each-ref --format='%(refname:short)' ${ref}`, { cwd: projectRoot, encoding: 'utf8' })
+        .split('\n').map(s => s.trim()).filter(Boolean);
+    } catch { return []; }
+  };
+  const local = collect('refs/heads');
+  const remote = collect('refs/remotes/origin')
+    .map(s => s.replace(/^origin\//, ''))
+    .filter(s => s && s !== 'HEAD' && s !== 'origin');
+  const branches = [...new Set([...local, ...remote])].sort();
+  return { branches, default: resolveBaseBranch(projectRoot) };
+}
+
 // Order a list of tasks so that dependencies (blocked_by) always come before
 // their dependents, breaking ties by priority. Tasks outside `tasks` that
 // appear in blocked_by are ignored (cross-group deps are not expected here).
@@ -1696,9 +2359,8 @@ function orderTaskIds(tasks) {
 // one branch. The branch is read from the plan's plan.md frontmatter, falling
 // back to the tasks-file top-level branch, then `jonggrang/<featureId>`.
 // Returns [{ featureId, branch, title, taskIds, tasks }].
-function groupPlans(tasksFile, projectRoot) {
-  const data = getTasks(tasksFile);
-  const runnable = data.tasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
+function groupPlansFromData(data, projectRoot) {
+  const runnable = (data.tasks || []).filter(t => t.status === 'pending' || t.status === 'in_progress');
   if (runnable.length === 0) return [];
 
   const featuresDir = path.join(projectRoot, '.jonggrang', '.output', 'features');
@@ -1713,19 +2375,29 @@ function groupPlans(tasksFile, projectRoot) {
   for (const [featureId, tasks] of groups) {
     let branch = '';
     let title = '';
+    let base = '';
     if (featureId !== '__default__') {
       const fm = parsePlanFrontmatter(path.join(featuresDir, featureId, 'plan.md'));
       branch = fm.branch || '';
       title = fm.feature || fm.description || '';
+      base = fm.base || '';
     }
     if (!branch) branch = data.branch || `jonggrang/${featureId}`;
-    if (!title)  title  = data.feature || featureId;
+    if (!title) title = data.feature || featureId;
     const taskIds = orderTaskIds(tasks);
-    result.push({ featureId, branch, title, taskIds, tasks });
+    result.push({ featureId, branch, base, title, taskIds, tasks });
   }
   // Stable order: by first task priority so the UI is deterministic.
   result.sort((a, b) => (a.tasks[0]?.priority || 0) - (b.tasks[0]?.priority || 0));
   return result;
+}
+
+function groupPlans(tasksFile, projectRoot) {
+  return groupPlansFromData(getTasks(tasksFile), projectRoot);
+}
+
+function groupPlansAll(projectRoot) {
+  return groupPlansFromData(getAllTasks(projectRoot), projectRoot);
 }
 
 // Co-author trailer added to every commit jonggrang makes on the user's behalf.
@@ -1760,17 +2432,37 @@ function worktreeFileDiff(worktreePath, baseSha, file) {
   return execSync(`git diff ${baseSha}${fileArg}`, { cwd: worktreePath, encoding: 'utf8', maxBuffer: 1024 * 1024 * 32 });
 }
 
+// Non-interactive git environment — git must NEVER block on a prompt (the
+// dashboard runs these unattended). Covers all three prompt sources:
+//   • GIT_TERMINAL_PROMPT=0  → no username/password prompt (fail fast instead).
+//   • GIT_ASKPASS=echo       → neuter any credential-helper popup.
+//   • GIT_SSH_COMMAND        → BatchMode=yes never prompts; accept-new auto-says
+//     "yes" to a NEW host key (the classic "Are you sure you want to continue
+//     connecting (yes/no)?") while still REJECTING a CHANGED key (MITM-safe);
+//     ConnectTimeout bounds a stuck handshake.
+// A user-provided GIT_ASKPASS/GIT_SSH_COMMAND is respected (only filled if unset).
+// Used on host AND inside sandboxes so behaviour is identical in both modes.
+function gitNonInteractiveEnv(extra = {}) {
+  return {
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: process.env.GIT_ASKPASS || 'echo',
+    GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND
+      || 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20',
+    ...extra,
+  };
+}
+
 // Push a branch to a remote (creates/updates the remote branch of the same name).
 // ASYNC on purpose: pushing is a network op, so we must NOT use execSync — that
 // blocks Node's single-threaded event loop and freezes the whole dashboard for
-// the duration. GIT_TERMINAL_PROMPT=0 fails fast instead of hanging on a prompt,
-// and the timeout bounds a stuck network/auth. Returns a Promise.
+// the duration. The non-interactive env fails fast instead of hanging on a
+// prompt, and the timeout bounds a stuck network/auth. Returns a Promise.
 function pushBranch(projectRoot, branch, remote = 'origin') {
   return new Promise((resolve, reject) => {
     execFile('git', ['push', '-u', remote, branch], {
       cwd: projectRoot,
       timeout: 60000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' },
+      env: { ...process.env, ...gitNonInteractiveEnv() },
     }, (err, stdout, stderr) => {
       if (!err) return resolve();
       if (err.killed || err.signal === 'SIGTERM') {
@@ -1791,7 +2483,7 @@ function gitHead(dir) {
 //   else 'main' (the default for new repos). Existing repos are respected.
 function resolveBaseBranch(projectRoot) {
   let cur = '';
-  try { cur = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot, encoding: 'utf8' }).trim(); } catch {}
+  try { cur = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot, encoding: 'utf8' }).trim(); } catch { }
   if (cur === 'main' || cur === 'master') return cur;
   const has = (b) => {
     try { execSync(`git rev-parse --verify refs/heads/${b}`, { cwd: projectRoot, stdio: 'pipe' }); return true; }
@@ -1802,7 +2494,14 @@ function resolveBaseBranch(projectRoot) {
   return 'main';
 }
 
-const BASE_STATE_PATHS = ['.jonggrang/.output', '.jonggrang/jonggrang-tasks.json', '.jonggrang/progress.txt'];
+// The base/integration branch (main) stays CLEAN: it carries each feature's
+// plan.md plus the shared project codemap (both are stable, human/agent-useful
+// artifacts) — never tasks/manifest/progress/code. Those live in (and are pushed
+// from) the per-feature work-mode worktree branch. So "Push plans" and the
+// approve auto-push commit ONLY these paths. (Project MEMORY.md is updated by
+// `promote` in the feature's worktree, so it travels the feature branch and
+// shows in that plan's Changes — not this base-state channel.)
+const BASE_STATE_PATHS = ['.jonggrang/.output/features/*/plan.md', '.jonggrang/codemap/codemap.json'];
 
 function baseStateDirty(projectRoot) {
   try {
@@ -1812,15 +2511,15 @@ function baseStateDirty(projectRoot) {
 }
 
 const JONGGRANG_GIT_IDENTITY = {
-  GIT_AUTHOR_NAME:     process.env.GIT_AUTHOR_NAME     || 'jonggrang',
-  GIT_AUTHOR_EMAIL:    process.env.GIT_AUTHOR_EMAIL    || 'jonggrang@local',
-  GIT_COMMITTER_NAME:  process.env.GIT_COMMITTER_NAME  || 'jonggrang',
+  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'jonggrang',
+  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'jonggrang@local',
+  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'jonggrang',
   GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'jonggrang@local',
 };
 
 function commitBaseState(projectRoot, message) {
   for (const p of BASE_STATE_PATHS) {
-    try { execSync(`git add -- "${p}"`, { cwd: projectRoot, stdio: 'pipe' }); } catch {}
+    try { execSync(`git add -- "${p}"`, { cwd: projectRoot, stdio: 'pipe' }); } catch { }
   }
   if (!baseStateDirty(projectRoot) && !hasStagedBaseState(projectRoot)) return false;
   const safe = String(message || 'chore: update plans & tasks').replace(/"/g, '\\"');
@@ -1829,6 +2528,29 @@ function commitBaseState(projectRoot, message) {
     env: { ...process.env, ...JONGGRANG_GIT_IDENTITY },
   });
   return true;
+}
+
+// Commit the base-state paths (plan.md files) and push them to the base branch,
+// rebasing on origin first so a moved main never rejects. Used by `approve` to
+// keep the remote base clean (plans only) without a manual "Push plans" click.
+// No-op (returns {skipped}) when there's no remote. Runs host-side git — under
+// sandbox this executes in-container (approve runs there) using the mounted key.
+async function pushBaseState(projectRoot, message) {
+  if (!hasRemote(projectRoot)) return { skipped: 'no-remote' };
+  const branch = resolveBaseBranch(projectRoot);
+  const env = { ...process.env, ...gitNonInteractiveEnv(), ...JONGGRANG_GIT_IDENTITY };
+  try { execSync(`git checkout "${branch}"`, { cwd: projectRoot, stdio: 'pipe' }); } catch { }
+  const committed = commitBaseState(projectRoot, message);
+  let rebased = false;
+  try {
+    execSync(`git fetch origin "${branch}"`, { cwd: projectRoot, stdio: 'pipe', env });
+    execSync(`git rebase --autostash -X theirs "origin/${branch}"`, { cwd: projectRoot, stdio: 'pipe', env });
+    rebased = true;
+  } catch {
+    try { execSync('git rebase --abort', { cwd: projectRoot, stdio: 'pipe' }); } catch { }
+  }
+  await pushBranch(projectRoot, branch);
+  return { branch, committed, rebased, pushed: true };
 }
 
 // Whether any base-state path is staged (so commit will produce something).
@@ -1903,19 +2625,21 @@ function copyDirSync(src, dst) {
  * openBugs: array of { id, description } objects for [open] bugs.
  * featureId: the feature these bugs belong to.
  */
-function buildBugsToTasksPrompt(openBugs, featureId, configFile, tasksFile) {
+function buildBugsToTasksPrompt(openBugs, featureId, configFile, projectRoot) {
   let configSection = '';
   if (configFile && fileExists(configFile)) {
     const cfg = readJSON(configFile);
     if (cfg) configSection = `## Project Config\n\`\`\`json\n${JSON.stringify(cfg, null, 2)}\n\`\`\`\n`;
   }
 
+  // Per-feature numbering: show only THIS feature's existing tasks so the agent
+  // continues this plan's own sequence (fresh feature → starts at task-001).
   let existingSection = '';
-  if (tasksFile && fileExists(tasksFile)) {
-    const data = getTasks(tasksFile);
-    if (data.tasks && data.tasks.length > 0) {
-      existingSection = `## Existing Tasks (do NOT duplicate)\n${data.tasks.map(t => `- ${t.id}: [${t.status}] ${t.title}`).join('\n')}\n`;
-    }
+  const featureTasks = getAllTasks(projectRoot).tasks.filter(t => t.feature_id === featureId);
+  if (featureTasks.length > 0) {
+    const existingIds = featureTasks.map(t => t.id).join(', ');
+    const nextId = `task-${String(maxTaskNumber(featureTasks) + 1).padStart(3, '0')}`;
+    existingSection = `## Existing Tasks in THIS Plan (do NOT renumber or duplicate)\n${existingIds}\nNext id to use: ${nextId}\n`;
   }
 
   const bugList = openBugs.map((b, i) =>
@@ -1923,6 +2647,8 @@ function buildBugsToTasksPrompt(openBugs, featureId, configFile, tasksFile) {
   ).join('\n\n');
 
   return `# Jonggrang — Convert Bug Reports to Tasks
+
+${buildProjectContext(configFile, { maxChars: 3000 })}
 
 ## Feature ID
 ${featureId}
@@ -1934,9 +2660,14 @@ ${bugList}
 
 ## Your Task
 
-For each bug above, create one BUGFIX task in \`.jonggrang/jonggrang-tasks.json\`.
+For each bug above, create one BUGFIX task via the CLI (do NOT edit the tasks file directly).
 
-Each task must follow this schema exactly:
+Run this single command to add all tasks at once:
+\`\`\`bash
+jonggrang task import --feature ${featureId} --input '<JSON array of task objects>'
+\`\`\`
+
+Each task object must follow this schema exactly:
 \`\`\`json
 {
   "id": "task-NNN",
@@ -1958,11 +2689,11 @@ Each task must follow this schema exactly:
 Rules:
 - priority 1 for all bugs (highest)
 - work_type is BUGFIX — keep tasks small and focused
-- Read the current jonggrang-tasks.json to determine the next task-NNN number
-- Append the new tasks (do NOT overwrite existing ones)
-- After writing, output one line per bug in the format:
-  TASK_CREATED bug-001 task-005
-  TASK_CREATED bug-002 task-006`;
+- Task numbering is PER-PLAN. Omit "id" to let the CLI auto-assign the next number for THIS plan (task-001 for a fresh plan, or continuing from "Next id to use" above). Do NOT reuse or renumber existing ids.
+- Do NOT include feature_id in the task objects — the CLI stamps it from --feature.
+- After running the import command, output one line per bug in the format (use the ids the CLI actually assigned — a fresh plan starts at task-001):
+  TASK_CREATED bug-001 task-001
+  TASK_CREATED bug-002 task-002`;
 }
 
 // ============================================================
@@ -1974,22 +2705,25 @@ Rules:
  * The agent reads existing code, dependencies, and patterns relevant to the
  * feature, then writes a discovery report to .jonggrang/.ephemeral/deep-plan-discovery.md
  */
-function buildDeepPlanDiscoveryPrompt(description, configFile) {
+function buildDeepPlanDiscoveryPrompt(description, configFile, discoveryPath, srcPath = null, opts = {}) {
+  const branchToUse = opts.baseBranch || (configFile && fileExists(configFile) ? resolveBaseBranch(path.dirname(configFile)) : 'main');
   let configSection = '';
   if (configFile && fileExists(configFile)) {
     const cfg = readJSON(configFile);
     if (cfg) configSection = `## Project Config\n\`\`\`json\n${JSON.stringify(cfg, null, 2)}\n\`\`\`\n`;
   }
+  const clarSection = opts.clarifications
+    ? `\n## Clarifications from User (authoritative — let these guide discovery)\n${opts.clarifications}\n`
+    : '';
 
   return `# Jonggrang Deep Plan — Phase 1: Codebase Discovery
 
-## Feature Request
-${description}
+${buildFeatureSection(description, srcPath, 'Feature Request')}
 
-## Project Context
-${configSection}- Read AGENTS.md for project conventions and patterns
-- Explore the codebase to understand existing structure
+${buildProjectContext(configFile, { maxChars: 3500 })}
 
+${buildBaseBranchContext(branchToUse)}
+${clarSection}
 ## Your Task
 
 You are performing codebase discovery for the feature above. Your goal is to understand the existing code so the plan can be precise and realistic.
@@ -2002,7 +2736,7 @@ Investigate:
 5. **Potential risks** — Note database schemas, APIs, or contracts that constrain the implementation.
 6. **Test patterns** — How are tests currently structured? What test helpers exist?
 
-Write your findings to \`.jonggrang/.ephemeral/deep-plan-discovery.md\` using this EXACT format:
+Write your findings to \`${discoveryPath}\` using this EXACT format:
 
 \`\`\`markdown
 # Discovery Report
@@ -2029,7 +2763,7 @@ Write your findings to \`.jonggrang/.ephemeral/deep-plan-discovery.md\` using th
 (anything surprising or non-obvious discovered during exploration)
 \`\`\`
 
-After writing the file, output exactly: "Discovery complete: .jonggrang/.ephemeral/deep-plan-discovery.md"`;
+After writing the file, output exactly: "Discovery complete: ${discoveryPath}"`;
 }
 
 /**
@@ -2037,11 +2771,12 @@ After writing the file, output exactly: "Discovery complete: .jonggrang/.ephemer
  * The agent reads the discovery report and thinks about approaches before committing to a plan.
  * Writes to .jonggrang/.ephemeral/deep-plan-analysis.md
  */
-function buildDeepPlanAnalysisPrompt(description, discoveryContent) {
+function buildDeepPlanAnalysisPrompt(description, discoveryContent, analysisPath, srcPath = null) {
   return `# Jonggrang Deep Plan — Phase 2: Complexity Analysis & Brainstorm
 
-## Feature Request
-${description}
+${buildFeatureSection(description, srcPath, 'Feature Request')}
+
+${buildProjectContext(process.cwd(), { maxChars: 2500 })}
 
 ## Discovery Report
 \`\`\`markdown
@@ -2075,7 +2810,7 @@ Produce:
 
 6. **Out of Scope** — What related things are explicitly NOT part of this feature
 
-Write your analysis to \`.jonggrang/.ephemeral/deep-plan-analysis.md\` using this EXACT format:
+Write your analysis to \`${analysisPath}\` using this EXACT format:
 
 \`\`\`markdown
 # Analysis Report
@@ -2110,31 +2845,38 @@ Write your analysis to \`.jonggrang/.ephemeral/deep-plan-analysis.md\` using thi
 - ...
 \`\`\`
 
-After writing the file, output exactly: "Analysis complete: .jonggrang/.ephemeral/deep-plan-analysis.md"`;
+After writing the file, output exactly: "Analysis complete: ${analysisPath}"`;
 }
 
 /**
  * Phase 3 of --deep: Condense discovery + analysis into enriched plan.md
  * Reads both ephemeral files and writes a richer plan.md than the standard one.
  */
-function buildDeepPlanCondensePrompt(description, discoveryContent, analysisContent, configFile, tasksFile) {
+function buildDeepPlanCondensePrompt(description, discoveryContent, analysisContent, configFile, projectRoot, draftPath, srcPath = null, opts = {}) {
+  const branchToUse = opts.baseBranch || (projectRoot ? resolveBaseBranch(projectRoot) : 'main');
   let completedSection = '';
-  if (tasksFile && fileExists(tasksFile)) {
-    const data = getTasks(tasksFile);
-    const done = (data.tasks || []).filter(t => t.status === 'completed');
-    if (done.length > 0) {
-      completedSection = `## Already Completed Work\nDo NOT plan to redo these:\n${done.map(t => `- ${t.id}: ${t.title}`).join('\n')}\n`;
-    }
+  const allTasks = getAllTasks(projectRoot);
+  const done = allTasks.tasks.filter(t => t.status === 'completed');
+  if (done.length > 0) {
+    completedSection = `## Already Completed Work\nDo NOT plan to redo these:\n${done.map(t => `- ${t.id}: ${t.title}`).join('\n')}\n`;
   }
+
+  const clarSection = opts.clarifications
+    ? `## Clarifications from User (authoritative — the plan MUST honor these)\n${opts.clarifications}\n\n`
+    : '';
 
   const now = new Date().toISOString();
 
   return `# Jonggrang Deep Plan — Phase 3: Condense to Plan
 
-## Feature Request
-${description}
+${buildFeatureSection(description, srcPath, 'Feature Request')}
 
-## Discovery Report
+${buildProjectContext(configFile, { maxChars: 3000 })}
+
+## Project Context
+The base branch for this feature is \`${branchToUse}\`.
+
+${clarSection}## Discovery Report
 \`\`\`markdown
 ${discoveryContent}
 \`\`\`
@@ -2150,12 +2892,13 @@ ${completedSection}
 
 Synthesize the discovery and analysis reports into a final plan.md file.
 
-Write \`.jonggrang/plan.md\` using EXACTLY this format (enriched version for --deep plans):
+Write \`${draftPath}\` using EXACTLY this format (enriched version for --deep plans):
 
 \`\`\`
 ---
 feature: short-kebab-case-name
 branch: feat/short-kebab-case-name
+base: "${branchToUse}"
 work_type: BUGFIX|SMALL|MEDIUM|LARGE
 description: one-line summary of the feature
 created_at: ${now}
@@ -2199,8 +2942,231 @@ Rules:
 - Affected Areas must list real files from the discovery report
 - Alternatives Considered must cover options NOT chosen from the analysis
 - Do NOT write code or file-level task details
-- Do NOT write to jonggrang-tasks.json
-- After writing plan.md, output exactly: "Deep plan written to .jonggrang/plan.md"`;
+- Do NOT write to the tasks file
+- After writing plan.md, output exactly: "Deep plan written to ${draftPath}"`;
+}
+
+/**
+ * Build the feature section of a prompt, optionally referencing a source document
+ * by its canonical path. The agent decides how to read the file.
+ * @param {string} description - user-provided description (may be empty if srcPath given)
+ * @param {string|null} srcPath - canonical path to a requirements/source document, or null
+ * @param {string} heading - section heading (default: 'Feature Description')
+ */
+function buildFeatureSection(description, srcPath, heading = 'Feature Description') {
+  if (!srcPath) return `## ${heading}\n${description}`;
+  const descLine = description
+    ? `## ${heading}\n${description}`
+    : `## ${heading}\n(from source document)`;
+  return `${descLine}\n\n## Source Document
+There is a requirements/source document at: ${srcPath}
+Read it for context before planning.`;
+}
+
+// ============================================================
+// PLAN CLARIFYING QUESTIONS  (jonggrang plan ask)
+// ============================================================
+//
+// `plan ask` is an AGENT-facing intake command (the sibling of `task import`):
+// during planning the agent SUBMITS structured clarifying questions instead of
+// guessing. The questions/answers are stored as durable siblings of plan.md
+// (NOT under .ephemeral, which --deep wipes) so they survive into plan revision.
+
+const MAX_PLAN_QUESTIONS = 6;
+const VALID_QUESTION_TYPES = new Set(['single_choice', 'multi_choice', 'text']);
+
+/**
+ * Normalize + validate a questions payload submitted by the agent.
+ * Accepts an object { goal_analysis, questions:[...] } or a bare array of
+ * question objects. Throws on malformed input (mirrors taskImport strictness).
+ */
+function normalizePlanQuestions(payload, goalOverride) {
+  let goal_analysis = '';
+  let questions;
+  if (Array.isArray(payload)) {
+    questions = payload;
+  } else if (payload && typeof payload === 'object') {
+    questions = payload.questions;
+    goal_analysis = payload.goal_analysis || '';
+  } else {
+    throw new Error('Input must be a questions object or a JSON array of questions.');
+  }
+  if (goalOverride) goal_analysis = goalOverride;
+  if (!Array.isArray(questions)) throw new Error('Input must contain a "questions" array.');
+  if (questions.length === 0) throw new Error('Questions array is empty.');
+
+  const normalized = [];
+  for (const q of questions) {
+    if (normalized.length >= MAX_PLAN_QUESTIONS) break; // cap — avoid an interrogation
+    if (!q || typeof q !== 'object') throw new Error('Each question must be an object.');
+    const question = String(q.question || '').trim();
+    if (!question) throw new Error('Each question needs a non-empty "question".');
+
+    // Fail fast on an explicit unsupported type — silently coercing a typo like
+    // "single-choice" to "text" would change the UX + payload contract without the
+    // agent noticing. Omitting "type" still defaults to the valid "text".
+    const type = String(q.type || 'text');
+    if (!VALID_QUESTION_TYPES.has(type)) {
+      throw new Error(`Question "${question}" has unsupported type "${type}". Use one of: ${[...VALID_QUESTION_TYPES].join(', ')} (omit "type" to default to text).`);
+    }
+
+    const item = {
+      id: q.id || `q${normalized.length + 1}`,
+      question,
+      rationale: String(q.rationale || ''),
+      type,
+    };
+
+    if (type === 'single_choice' || type === 'multi_choice') {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const options = opts
+        .filter(o => o && (o.value != null || o.label != null))
+        .map(o => ({
+          value: String(o.value != null ? o.value : o.label),
+          label: String(o.label != null ? o.label : o.value),
+          rationale: String(o.rationale || ''),
+        }));
+      if (options.length < 2) {
+        throw new Error(`Question "${question}" (${type}) needs at least 2 options.`);
+      }
+      item.options = options;
+      item.allow_freetext = q.allow_freetext !== false; // default true
+    }
+    normalized.push(item);
+  }
+
+  return { goal_analysis, questions: normalized };
+}
+
+/** Validate + persist questions submitted by the agent. Returns the stored object. */
+function savePlanQuestions(questionsFile, payload, goalOverride) {
+  const data = normalizePlanQuestions(payload, goalOverride);
+  writeJSON(questionsFile, data);
+  return data;
+}
+
+/** Read the questions store. Returns { goal_analysis, questions:[] } when absent. */
+function getPlanQuestions(questionsFile) {
+  const data = readJSON(questionsFile);
+  if (!data || !Array.isArray(data.questions)) return { goal_analysis: '', questions: [] };
+  return data;
+}
+
+/** Delete the questions store (called before a fresh question-generation pass). */
+function clearPlanQuestions(questionsFile) {
+  try { fs.unlinkSync(questionsFile); } catch { /* already gone */ }
+}
+
+function clearPlanAnswers(answersFile) {
+  try { fs.unlinkSync(answersFile); } catch { /* already gone */ }
+}
+
+/** Validate + persist the user's answers. Accepts { goal_analysis, answers:[] } or an array. */
+function savePlanAnswers(answersFile, payload) {
+  let goal_analysis = '';
+  let answers;
+  if (Array.isArray(payload)) {
+    answers = payload;
+  } else if (payload && typeof payload === 'object') {
+    answers = payload.answers;
+    goal_analysis = payload.goal_analysis || '';
+  } else {
+    throw new Error('Answers must be an object or array.');
+  }
+  if (!Array.isArray(answers)) throw new Error('Answers must contain an "answers" array.');
+  const data = { goal_analysis, answers };
+  writeJSON(answersFile, data);
+  return data;
+}
+
+/** Read the answers store. Returns null when absent. */
+function getPlanAnswers(answersFile) {
+  const data = readJSON(answersFile);
+  if (!data || !Array.isArray(data.answers)) return null;
+  return data;
+}
+
+/**
+ * Render collected answers into a markdown block for injection into plan prompts
+ * and for the human-visible "## Clarifications" section of plan.md. Returns '' when empty.
+ */
+function formatClarifications(answers) {
+  if (!answers || !Array.isArray(answers.answers) || answers.answers.length === 0) return '';
+  const lines = [];
+  if (answers.goal_analysis) { lines.push(`Goal: ${answers.goal_analysis}`, ''); }
+  for (const a of answers.answers) {
+    const resolved = (a.freetext != null && a.freetext !== '')
+      ? a.freetext
+      : (a.label != null && a.label !== '' ? a.label
+        : (a.value != null ? String(a.value) : '(no answer)'));
+    lines.push(`- **${a.question || a.id}** → ${resolved}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Build the "questions-only" Pass-A prompt: the agent analyzes the goal and, if
+ * anything is ambiguous, SUBMITS clarifying questions via `jonggrang plan ask`
+ * (it never writes plan.md here). If the request is unambiguous it outputs
+ * NO_QUESTIONS and stops.
+ */
+function buildPlanQuestionsPrompt(description, configFile, srcPath = null, baseBranch = null) {
+  const branchToUse = baseBranch || (configFile && fileExists(configFile) ? resolveBaseBranch(path.dirname(configFile)) : 'main');
+  let configSection = '';
+  if (configFile && fileExists(configFile)) {
+    const cfg = readJSON(configFile);
+    if (cfg) configSection = `## Project Config\n\`\`\`json\n${JSON.stringify(cfg, null, 2)}\n\`\`\`\n`;
+  }
+
+  return `# Jonggrang — Clarify Before Planning
+
+${buildFeatureSection(description, srcPath, 'Feature Request')}
+
+${configSection}${buildBaseBranchContext(branchToUse)}
+- Skim the codebase (ls/find/read) only as much as needed on the base branch to judge what is ambiguous
+
+## Your Task
+1. **Analyze the goal.** In 1-2 sentences, restate what the user wants to achieve.
+2. **Decide if you can plan confidently.** If anything MATERIAL is ambiguous —
+   architecture choice, scope boundaries, data model, backwards-compatibility,
+   UX, or a decision with real trade-offs — DO NOT guess.
+3. **If ambiguous, submit clarifying questions** by running the intake command
+   below, then STOP (do not write any plan). The user will answer and you will be
+   re-invoked with the answers.
+4. **If the request is already unambiguous**, output exactly \`NO_QUESTIONS\` and stop.
+
+## How to submit questions (preferred: write a file, then pass its path)
+Write the questions JSON to a temp file (avoids shell-escaping issues), then run:
+
+\`\`\`bash
+jonggrang plan ask /tmp/jonggrang-questions.json
+\`\`\`
+
+The JSON must match this schema (object with goal_analysis + questions array):
+
+\`\`\`json
+{
+  "goal_analysis": "one or two sentences restating the user's goal",
+  "questions": [
+    {
+      "question": "Which X do you want?",
+      "rationale": "why this matters for the plan",
+      "type": "single_choice",
+      "options": [
+        { "value": "a", "label": "Option A", "rationale": "trade-off of A" },
+        { "value": "b", "label": "Option B", "rationale": "trade-off of B" }
+      ]
+    },
+    { "question": "Any open constraints?", "rationale": "affects scope", "type": "text" }
+  ]
+}
+\`\`\`
+
+Rules:
+- Ask ONLY what genuinely blocks a correct plan. At most ${MAX_PLAN_QUESTIONS} questions.
+- Every option must carry a short \`rationale\` (the trade-off it implies).
+- Use \`"type":"text"\` for open-ended questions; \`"single_choice"\`/\`"multi_choice"\` need ≥2 options.
+- After the command succeeds, STOP. Do NOT write .jonggrang/plan.md.`;
 }
 
 // ============================================================
@@ -2216,6 +3182,11 @@ module.exports = {
   readConfig,
   checkConfig,
 
+  // State validation
+  validateConfigFile,
+
+  validateProjectState,
+
   // Task management
   getTasks,
   getNextTask,
@@ -2228,7 +3199,7 @@ module.exports = {
   addTasksBulk,
   updateTask,
   removeTask,
-  generateTaskId,
+
   countPending,
   countCompleted,
   countTotal,
@@ -2243,8 +3214,23 @@ module.exports = {
   stackToType,
   getTestCommand,
 
+  // Plan clarifying questions (plan ask)
+  savePlanQuestions,
+  getPlanQuestions,
+  clearPlanQuestions,
+  clearPlanAnswers,
+  savePlanAnswers,
+  getPlanAnswers,
+  normalizePlanQuestions,
+  formatClarifications,
+  buildPlanQuestionsPrompt,
+
   // Prompt builders
+  buildFeatureSection,
+  buildProjectContext,
+  buildBaseBranchContext,
   buildDraftPlanPrompt,
+  buildAppendPlanPrompt,
   buildRevisePlanPrompt,
   buildTasksFromPlanPrompt,
   buildBugsToTasksPrompt,
@@ -2268,7 +3254,12 @@ module.exports = {
   // Parallel / worktree
   getTaskGroups,
   groupPlans,
+  groupPlansAll,
   parsePlanFrontmatter,
+  setPlanBase,
+  setPlanFrontmatterField,
+  isSafeBranchName,
+  listBranches,
   orderTaskIds,
   createWorktree,
   removeWorktree,
@@ -2279,133 +3270,34 @@ module.exports = {
   worktreeChangedFiles,
   worktreeFileDiff,
   pushBranch,
+  gitNonInteractiveEnv,
   gitHead,
   hasRemote,
   resolveBaseBranch,
   baseStateDirty,
+  pushBaseState,
   commitBaseState,
+  BASE_STATE_PATHS,
 
-  // Orchestration extensions
-  buildWorkPromptForRole,
-  resolveSkillTier,
-  buildRoleContext,
-  updateTaskWithRole,
-  getNextUnblockedTaskForRole,
+  // Per-feature state resolvers
+  tasksFileFor,
+  progressFileFor,
+  getAllTasks,
+  resolveActiveFeature,
+  findTaskFeature,
+  migrateLegacyTaskState,
+  migrateLegacyPlanDraft,
+  // Plan draft resolvers
+  draftsDir,
+  draftFileFor,
+  draftDirFor,
+  questionsFileFor,
+  answersFileFor,
+  generateDraftId,
+  getAllDrafts,
+  resolveActiveDraft,
+  resolveActiveQuestionDraft,
+  verifyDraftWritten,
 };
 
-// ============================================================
-// ORCHESTRATION EXTENSIONS
-// ============================================================
 
-const roles = require('./roles');
-const gateway = require('./gateway');
-
-/**
- * Build a work prompt tailored to a specific role.
- * Extends buildWorkPrompt() with role context + gateway routing.
- */
-function buildWorkPromptForRole(paths, task, config, role) {
-  const roleConfig = roles.getRole(role || 'developer');
-  const agentDefPath = path.join(__dirname, '..', 'templates', 'agents', `${role || 'developer'}.md`);
-
-  let agentDef = '';
-  try {
-    if (fileExists(agentDefPath)) {
-      agentDef = fs.readFileSync(agentDefPath, 'utf8');
-    }
-  } catch { }
-
-  // Gateway routing for this task
-  const taskText = `${task.title || ''} ${task.description || ''}`;
-  const gatewayResponse = gateway.buildGatewayResponse(taskText, paths.skillsDir || path.join(__dirname, '..', 'skills'));
-
-  const basePrompt = buildWorkPrompt(paths, task, config);
-
-  const roleSection = [
-    `\n## Agent Role: ${roleConfig ? roleConfig.label : role}`,
-    agentDef ? `\n${agentDef}` : '',
-    `\n## Domain Context`,
-    gatewayResponse.instruction,
-    `\n## Skill Files to Load`,
-    gatewayResponse.skill_paths.length > 0
-      ? gatewayResponse.skill_paths.map(p => `  - ${p}`).join('\n')
-      : '  (no specific library skills — use core skills)',
-  ].join('\n');
-
-  return basePrompt + roleSection;
-}
-
-/**
- * Resolve which skill tier a skill name belongs to.
- * Returns: { tier: 'core'|'library'|'legacy', path: string } or null.
- */
-function resolveSkillTier(skillName, skillsBaseDir) {
-  if (!skillName || !skillsBaseDir) return null;
-  return {
-    path: gateway.resolveSkillPath(skillName, skillsBaseDir),
-    tier: gateway.resolveSkillPath(skillName, skillsBaseDir)
-      ? (gateway.resolveSkillPath(skillName, skillsBaseDir).includes('/core/') ? 'core'
-        : gateway.resolveSkillPath(skillName, skillsBaseDir).includes('/library/') ? 'library'
-          : 'legacy')
-      : null,
-  };
-}
-
-/**
- * Build role context block for injection into agent prompts.
- */
-function buildRoleContext(roleName, featureId, manifestPath) {
-  const role = roles.getRole(roleName);
-  if (!role) return '';
-
-  const lines = [
-    `## Role: ${role.label}`,
-    `Tools allowed: ${role.tools.join(', ')}`,
-    `Tools forbidden: ${role.forbidden_tools.join(', ')}`,
-    `Completion signal: output "${role.completion_signal}" when done`,
-    featureId ? `Feature ID: ${featureId}` : '',
-    `Output directory: .jonggrang/.output/features/${featureId || '{feature_id}'}/`,
-  ].filter(Boolean);
-
-  return lines.join('\n');
-}
-
-/**
- * Update a task's role field.
- */
-function updateTaskWithRole(tasksFile, taskId, roleName) {
-  const data = getTasks(tasksFile);
-  const task = data.tasks.find(t => t.id === taskId);
-  if (task) {
-    task.role = roleName;
-    writeJSON(tasksFile, data);
-    return task;
-  }
-  return null;
-}
-
-/**
- * Get the next unblocked task for a specific role.
- * If role is null, falls back to getNextTask() behavior.
- */
-function getNextUnblockedTaskForRole(tasksFile, targetRole) {
-  if (!targetRole) return getNextTask(tasksFile);
-
-  const data = getTasks(tasksFile);
-  const done = data.tasks.filter(t => t.status === 'completed').map(t => t.id);
-
-  const candidates = data.tasks
-    .filter(t => (t.status === 'pending' || t.status === 'in_progress'))
-    .filter(t => {
-      const blockedBy = t.blocked_by || [];
-      return blockedBy.length === 0 || blockedBy.every(id => done.includes(id));
-    })
-    .filter(t => {
-      // Match by explicit role field, or infer from title/description
-      const taskRole = t.role || roles.inferRoleFromTask(t);
-      return taskRole === targetRole;
-    })
-    .sort((a, b) => (a.priority || 0) - (b.priority || 0));
-
-  return candidates.length > 0 ? candidates[0].id : null;
-}
