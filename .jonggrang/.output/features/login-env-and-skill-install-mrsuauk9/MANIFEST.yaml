@@ -1,0 +1,176 @@
+feature_id: login-env-and-skill-install-mrsuauk9
+description: login-env-and-skill-install
+work_type: MEDIUM
+created_at: '2026-07-20T06:24:40.763Z'
+updated_at: '2026-07-20T06:28:24.079Z'
+status: running
+current_phase: 8
+active_phases:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+phases:
+  '1':
+    name: setup
+    status: completed
+    started_at: null
+    completed_at: '2026-07-20T06:28:24.050Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '2':
+    name: triage
+    status: completed
+    started_at: null
+    completed_at: '2026-07-20T06:28:24.059Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '3':
+    name: codebase-discovery
+    status: completed
+    started_at: null
+    completed_at: '2026-07-20T06:28:24.064Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '4':
+    name: skill-discovery
+    status: completed
+    started_at: null
+    completed_at: '2026-07-20T06:28:24.069Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '5':
+    name: complexity
+    status: completed
+    started_at: null
+    completed_at: '2026-07-20T06:28:24.072Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '6':
+    name: brainstorming
+    status: completed
+    started_at: null
+    completed_at: '2026-07-20T06:28:24.077Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '7':
+    name: architecting
+    status: completed
+    started_at: null
+    completed_at: '2026-07-20T06:28:24.079Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '8':
+    name: implementation
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '9':
+    name: simplification
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '10':
+    name: design-verification
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '11':
+    name: domain-compliance
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '12':
+    name: code-quality
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '13':
+    name: test-planning
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '14':
+    name: testing
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '15':
+    name: coverage
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '16':
+    name: test-quality
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+  '17':
+    name: completion
+    status: pending
+    started_at: null
+    completed_at: null
+    agent_id: null
+    output: null
+    output_files: []
+agents: {}
+validation:
+  review_passed: false
+  tests_passed: false
+  coverage_met: false
+locks: []
+context_usage: null
