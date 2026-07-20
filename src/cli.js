@@ -130,6 +130,9 @@ ${ui.bold('Webhooks:')}
 ${ui.bold('Global flags:')}
   --json                Output raw JSON instead of formatted tables
   --api-key <key>       Use this API key for the run (overrides env + saved config)
+  --sandbox             Target the sandbox environment (api.mayar.club)
+  --production          Target the production environment (api.mayar.id)
+  --env <value>         Target environment: sandbox or production
   --limit N             Page size (v2, default 10, max 50)
   --after CURSOR        Cursor for next page (from previous response's nextStartingAfter)
   --pageSize N          Alias for --limit
@@ -144,8 +147,8 @@ ${ui.bold('Environment:')}
   NODE_ENV=development  Target the sandbox (api/auth .mayar.club) instead of production
 
 ${ui.dim('Resolution order: --api-key flag > MAYAR_API_KEY env > saved config.')}
-${ui.dim('API endpoint:  MAYAR_API_URL, else NODE_ENV=development → api.mayar.club, else api.mayar.id')}
-${ui.dim('Auth endpoint: MAYAR_AUTH_URL, else NODE_ENV=development → auth.mayar.club, else auth.mayar.id')}
+${ui.dim('Endpoint: --sandbox/--production/--env > NODE_ENV=development > stored endpoint (default production).')}
+${ui.dim('Priority:  invocation flags → NODE_ENV → config.json → production (default)')}
 ${ui.dim('Config:   ~/.config/mayar/config.json (chmod 600)')}
 `;
 
@@ -158,6 +161,8 @@ function parseFlags(argv) {
     if (a === '--json') flags.json = true;
     else if (a === '--force') flags.force = true;
     else if (a === '--no-browser') flags['no-browser'] = true;
+    else if (a === '--sandbox') flags.sandbox = true;
+    else if (a === '--production') flags.production = true;
     else if (a === '--api-key') flags.apiKey = argv[++i];
     else if (a.startsWith('--api-key=')) flags.apiKey = a.slice('--api-key='.length);
     else if (a === '--page') flags.page = argv[++i];
@@ -165,6 +170,7 @@ function parseFlags(argv) {
     else if (a === '--limit') flags.limit = argv[++i];
     else if (a === '--after' || a === '--starting-after' || a === '--startingAfter') flags.after = argv[++i];
     else if (a === '--data') flags.data = argv[++i];
+    else if (a === '--env') flags.env = argv[++i];
     else if (a === '-h' || a === '--help') flags.help = true;
     else if (a === '-v' || a === '--version') flags.version = true;
     else if (a.startsWith('--')) {
@@ -192,13 +198,31 @@ async function ensureKey(flags) {
   }
   const key = await ui.askSecret(ui.bold('Paste your production API key: '));
   if (!key.trim()) { process.stderr.write(ui.red('No key provided. Aborting.\n')); process.exit(1); }
-  config.save({ apiKey: key.trim(), endpoint: 'production', savedAt: new Date().toISOString() });
+  config.save({ apiKey: key.trim(), endpoint: config.resolveEndpoint(), savedAt: new Date().toISOString() });
   process.stdout.write(ui.green(`✓ Saved to ${config.file}`) + '\n\n');
   return key.trim();
 }
 
 async function run(argv) {
   const { flags, positional } = parseFlags(argv);
+
+  // Resolve endpoint override from flags
+  if (flags.sandbox && flags.production) {
+    process.stderr.write(ui.red('Error: --sandbox and --production cannot be used together.\n'));
+    process.exit(1);
+  }
+  if (flags.sandbox) config.setRuntimeEndpoint('sandbox');
+  else if (flags.production) config.setRuntimeEndpoint('production');
+  else if (flags.env) {
+    const v = flags.env.toLowerCase();
+    if (v !== 'sandbox' && v !== 'production') {
+      process.stderr.write(ui.red(`Error: Invalid --env value: ${flags.env}. Must be 'sandbox' or 'production'.\n`));
+      process.exit(1);
+    }
+    config.setRuntimeEndpoint(v);
+  } else {
+    config.setRuntimeEndpoint(null);
+  }
 
   if (flags.version) { process.stdout.write(VERSION + '\n'); return; }
   if (!positional.length || (flags.help && !positional.length)) { process.stdout.write(HELP()); return; }

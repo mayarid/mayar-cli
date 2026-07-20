@@ -2,12 +2,11 @@ const https = require('https');
 const { URL } = require('url');
 const config = require('./config');
 
-const BASE_URL = config.apiBaseUrl();
 const VERSION = require('../package.json').version;
 
 function request(method, pathname, { apiKey, body, query } = {}) {
   return new Promise((resolve, reject) => {
-    const url = new URL(BASE_URL + pathname);
+    const url = new URL(config.apiBaseUrl() + pathname);
     if (query) {
       for (const [k, v] of Object.entries(query)) {
         if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
@@ -44,4 +43,4 @@ function request(method, pathname, { apiKey, body, query } = {}) {
   });
 }
 
-module.exports = { request, BASE_URL };
+module.exports = { request };
