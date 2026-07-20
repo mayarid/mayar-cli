@@ -144,6 +144,7 @@ ${ui.bold('Global flags:')}
   --after CURSOR        Cursor for next page (from previous response's nextStartingAfter)
   --pageSize N          Alias for --limit
   --data <json|@file>   Inline JSON or @path to a JSON file
+  --refresh             Force re-fetch cached data (docs command)
   -h, --help            Show help
   -v, --version         Show version
 
@@ -287,6 +288,7 @@ async function run(argv) {
       reviews:      './commands/review',
       discount:     './commands/discount',
       discounts:    './commands/discount',
+      docs:         './commands/docs',
       coupon:       './commands/discount',
       coupons:      './commands/discount',
       bundling:     './commands/bundling',
