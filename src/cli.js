@@ -19,6 +19,9 @@ ${ui.bold('Agent Skills:')}
   skill install [--target <all|agents|claude|opencode|codex|cursor>] [--force]
                                               Install Mayar SKILL.md into AI agent directories
 
+${ui.bold('Documentation:')}
+  docs [topic] [--json] [--refresh]          Browse Mayar API docs in the terminal
+
 ${ui.bold('Account:')}
   whoami                              Show identity behind the saved API key
   balance                             Get account balance
@@ -164,6 +167,7 @@ function parseFlags(argv) {
     if (a === '--') { positional.push(...argv.slice(i + 1)); break; }
     if (a === '--json') flags.json = true;
     else if (a === '--force') flags.force = true;
+    else if (a === '--refresh') flags.refresh = true;
     else if (a === '--no-browser') flags['no-browser'] = true;
     else if (a === '--sandbox') flags.sandbox = true;
     else if (a === '--production') flags.production = true;
@@ -237,6 +241,7 @@ async function run(argv) {
     if (cmd === 'help') { process.stdout.write(HELP()); return; }
     if (cmd === 'init') { return await require('./commands/init').run({ flags }); }
     if (cmd === 'login') { return await require('./commands/login').run({ flags }); }
+    if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
     if (cmd === 'api-key' || cmd === 'apikey') {
       return await require('./commands/apikey').run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
     }
