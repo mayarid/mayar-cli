@@ -135,6 +135,100 @@
       "started_at": "2026-07-20T09:24:16.535Z",
       "completed_at": "2026-07-20T09:25:25.633Z",
       "error_log": []
+    },
+    {
+      "id": "task-008",
+      "title": "Create src/commands/docs.js — fetch, cache, and parse llms.txt index",
+      "description": "Create the docs.js module as the core infrastructure for the mayar docs command. Implement four pieces: (1) fetchLlmsTxt() — GET https://docs.mayar.id/llms.txt with https.get + redirect-follow (copy the pattern from skill.js: follow 301/302 up to 3 hops, reject on non-200, accumulate body with res.on('data')/res.on('end')). (2) parseIndex(raw) — parse the llms.txt markdown into an array of {category, title, url, description} objects grouped by ## sections. Each ## heading becomes the category name. Each bullet/line under a heading that contains a markdown link [title](url) becomes an entry. Extract description from trailing text after the link. (3) Cache management: write the raw llms.txt to ~/.config/mayar/cache/llms.txt (using fs.mkdirSync({recursive:true}) for parent dirs) alongside ~/.config/mayar/cache/meta.json containing {fetchedAt: ISO timestamp}. On startup, check cache freshness: if cache exists and meta.fetchedAt is within 24 hours AND --refresh flag is NOT set, skip network fetch and use cached copy. (4) Graceful fallback: if network fetch fails but a cached llms.txt exists (even if stale), use it with ui.dim('⚠ Using cached documentation (offline).'). If no cache exists and fetch fails, print ui.red('Error: Could not fetch documentation and no cache available.') and exit(1). Export async function run(ctx) matching the pattern of skill.js (receives {flags, positional}). For this task, run() should only validate the setup works — actual browsing/search behavior comes in later tasks.",
+      "priority": 1,
+      "status": "pending",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [],
+      "passes": false,
+      "files": [
+        "src/commands/docs.js"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "error_log": []
+    },
+    {
+      "id": "task-009",
+      "title": "Implement interactive TTY browsing (mayar docs without arguments)",
+      "description": "Add interactive browsing mode to docs.js run(). When process.stdin.isTTY is true and positional has no keyword argument, render a numbered menu of categories from the parsed llms.txt index. Implementation: (1) Group entries by category; display each category as ui.bold('N. Category Name') with a count of endpoints (ui.dim). (2) Use ui.ask('Choose a topic (or 0 to exit): ') to prompt. (3) On valid numeric selection, fetch the documentation page URL using the same https.get+redirect pattern from fetchLlmsTxt(); show ui.dim('Fetching...') while loading. (4) Render the fetched Markdown: lines starting with '#' get ui.bold(), lines starting with '```' get ui.dim(), normal text prints as-is. After rendering, loop back to the menu prompt. (5) Handle edge cases: input '0' or empty exits cleanly; invalid number prints ui.red('Invalid choice.') and re-prompts; input 'a' or 'all' re-displays the full menu. Do not use external Markdown libraries — raw terminal rendering only using existing ui helpers.",
+      "priority": 2,
+      "status": "pending",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-008"
+      ],
+      "passes": false,
+      "files": [
+        "src/commands/docs.js"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "error_log": []
+    },
+    {
+      "id": "task-010",
+      "title": "Implement keyword search (mayar docs <topic>)",
+      "description": "Add keyword search mode to docs.js run(). When a positional argument (keyword) is provided, filter the parsed llms.txt index entries case-insensitively. Implementation: (1) Search across title, description, and url fields using String.includes() (no regex). (2) If matches found: display as a bullet list with ui.bold(title), the url in ui.cyan(), and description in ui.dim(). If exactly ONE match, automatically fetch and display the full documentation page (same rendering logic as task-009 — bold headings, dim code blocks). If MULTIPLE matches, show only the list (user can re-run with a more specific keyword). (3) If ZERO matches: print ui.yellow('No documentation found for \"<keyword>\".') followed by ui.dim('Run mayar docs without arguments to browse all topics.'). (4) The search should still honor --refresh flag (re-fetch index before searching). Do NOT fetch page content for zero-match case.",
+      "priority": 2,
+      "status": "pending",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-008"
+      ],
+      "passes": false,
+      "files": [
+        "src/commands/docs.js"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "error_log": []
+    },
+    {
+      "id": "task-011",
+      "title": "Implement JSON output mode (--json flag)",
+      "description": "Add --json output support to docs.js run(). When flags.json is true, bypass all interactive prompts and pretty-print code paths — output structured JSON via ui.jsonOut() and return. Implementation: (1) For mayar docs --json (no keyword): output {topics: [{category, title, url, description}...]} — the full parsed index. (2) For mayar docs <keyword> --json: output {matches: [{category, title, url, description}...], keyword: '<keyword>'}. (3) When a keyword yields exactly ONE match AND --json is set: fetch the full documentation page and include the raw content as a content field in the match object. (4) The --json flag must work non-interactively (no TTY required) — skip all ui.ask() calls. (5) When --json is combined with --refresh, re-fetch the index before outputting (always, even if cache is fresh). Ensure the JSON output is valid and well-formed.",
+      "priority": 3,
+      "status": "pending",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-009",
+        "task-010"
+      ],
+      "passes": false,
+      "files": [
+        "src/commands/docs.js"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "error_log": []
+    },
+    {
+      "id": "task-012",
+      "title": "Register docs command in cli.js routing + add to HELP text + add --refresh flag",
+      "description": "Wire the docs command into src/cli.js: (1) Add --refresh as an explicit boolean flag in parseFlags() — insert before the generic -- handler alongside --json and --force: else if (a === '--refresh') flags.refresh = true; This prevents --refresh from consuming the next argument as a value. (2) Route the docs command before the ensureKey() gate in run(): add a block if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter(x => x !== undefined) }); } placed after the config block and before the handlers map lookup. Documentation is public — no API key required. (3) Add a Documentation: section to the HELP() template string between the Agent Skills: and Account: sections: docs [topic] — Browse and search Mayar API documentation from docs.mayar.id followed by dim text showing the --json and --refresh flags on the next line.",
+      "priority": 3,
+      "status": "pending",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-008"
+      ],
+      "passes": false,
+      "files": [
+        "src/cli.js"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "error_log": []
     }
   ]
 }
