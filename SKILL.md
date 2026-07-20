@@ -193,6 +193,7 @@ npx -y mayar@latest docs --refresh
 ```bash
 npx -y mayar@latest init                                # Interactive setup (key + env)
 npx -y mayar@latest login [--no-browser]                # Browser OAuth sign-in
+npx -y mayar@latest status                              # Show environment, user identity, & API key status
 npx -y mayar@latest api-key <key>                       # Save API key non-interactively
 npx -y mayar@latest config show                         # Show config path & masked key
 npx -y mayar@latest config reset                        # Reset saved API key & config
@@ -201,6 +202,7 @@ npx -y mayar@latest config reset                        # Reset saved API key & 
 ### Account
 
 ```bash
+npx -y mayar@latest status              # Show active environment, identity, & API key
 npx -y mayar@latest whoami              # Verify key + show identity
 npx -y mayar@latest balance             # Get account balance
 ```

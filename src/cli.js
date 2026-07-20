@@ -11,6 +11,7 @@ ${ui.bold('Usage:')}
 ${ui.bold('Setup:')}
   init                                Run first-time setup (or re-configure API key)
   login [--no-browser]                Sign in via browser (Google OAuth) and save auth token
+  status                              Show active environment, user identity, and API key status
   api-key <key>                       Save API key non-interactively
   config show                         Show config path and masked API key
   config reset                        Remove the saved API key
@@ -248,6 +249,7 @@ async function run(argv) {
     if (cmd === 'help') { process.stdout.write(HELP()); return; }
     if (cmd === 'init') { return await require('./commands/init').run({ flags }); }
     if (cmd === 'login') { return await require('./commands/login').run({ flags }); }
+    if (cmd === 'status') { return await require('./commands/status').run({ flags }); }
     if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
     if (cmd === 'api-key' || cmd === 'apikey') {
       return await require('./commands/apikey').run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
