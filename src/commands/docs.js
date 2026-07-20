@@ -392,4 +392,181 @@ async function run(ctx) {
   }
 }
 
-module.exports = { run, parseLLMsTxt, slugify, parseTitleUrl, fetchOrGetLLMsTxt };
+// ---------------------------------------------------------------------------
+// fetchPageContent — fetch a documentation page HTML
+// ---------------------------------------------------------------------------
+function fetchPageContent(url) {
+  return new Promise((resolve, reject) => {
+    function doFetch(targetUrl, redirects) {
+      const req = https.get(
+        targetUrl,
+        {
+          headers: { 'User-Agent': `mayar-cli/${VERSION}` },
+        },
+        (res) => {
+          // Follow redirects (301/302/307/308) up to 3 hops
+          if (
+            (res.statusCode === 301 ||
+              res.statusCode === 302 ||
+              res.statusCode === 307 ||
+              res.statusCode === 308) &&
+            res.headers.location
+          ) {
+            if (redirects >= 3) {
+              res.resume();
+              reject(new Error('Too many redirects'));
+              return;
+            }
+            const nextUrl = new URL(res.headers.location, targetUrl).href;
+            res.resume();
+            doFetch(nextUrl, redirects + 1);
+            return;
+          }
+
+          // Accept any 2xx; reject non-2xx
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            res.resume();
+            reject(new Error(`HTTP ${res.statusCode}`));
+            return;
+          }
+
+          let data = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk) => {
+            data += chunk;
+          });
+          res.on('end', () => {
+            resolve(data);
+          });
+          res.on('error', reject);
+        },
+      );
+
+      req.setTimeout(10000, () => {
+        req.destroy();
+        reject(new Error('Request timed out'));
+      });
+
+      req.on('error', reject);
+    }
+
+    doFetch(url, 0);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// renderContent — extract and format HTML for terminal output
+// ---------------------------------------------------------------------------
+function renderContent(html) {
+  // (a) Extract main content region
+  let content = '';
+  let match;
+
+  // Try <main>...</main>
+  match = html.match(/<main[^>]*>([\s\S]*?)<\/main>/i);
+  if (match) {
+    content = match[1];
+  }
+
+  // Try <article>...</article>
+  if (!content) {
+    match = html.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
+    if (match) {
+      content = match[1];
+    }
+  }
+
+  // Fallback: <div class="...content...">...</div>
+  if (!content) {
+    match = html.match(
+      /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    );
+    if (match) {
+      content = match[1];
+    }
+  }
+
+  // Final fallback: entire <body> content
+  if (!content) {
+    match = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (match) {
+      content = match[1];
+    } else {
+      content = html;
+    }
+  }
+
+  // (b) Strip all HTML tags
+  let text = content.replace(/<[^>]*>/g, '');
+
+  // (c) Decode common HTML entities
+  const entities = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&nbsp;': ' ',
+    '&#x2F;': '/',
+  };
+  text = text.replace(
+    /&(?:amp|lt|gt|quot|nbsp|#39|#x2F);/g,
+    (m) => entities[m] || m,
+  );
+
+  // (d) Collapse 3+ consecutive newlines into 2
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  // (e) Trim leading/trailing whitespace per line
+  text = text
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n');
+
+  // (f) Apply terminal formatting
+  const lines = text.split('\n');
+  const result = [];
+  let inCodeFence = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Detect code fences
+    if (line.startsWith('```')) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+
+    if (inCodeFence) {
+      // Indent code by 2 spaces
+      result.push('  ' + line);
+      continue;
+    }
+
+    // Detect horizontal rules
+    if (line === '---' || line === '***') {
+      result.push(ui.dim('─'.repeat(40)));
+      continue;
+    }
+
+    // Detect markdown headings (lines starting with #)
+    if (/^#{1,6}\s/.test(line)) {
+      result.push(ui.bold(line));
+      continue;
+    }
+
+    result.push(line);
+  }
+
+  return result.join('\n').trim();
+}
+
+module.exports = {
+  run,
+  parseLLMsTxt,
+  slugify,
+  parseTitleUrl,
+  fetchOrGetLLMsTxt,
+  fetchPageContent,
+  renderContent,
+};
