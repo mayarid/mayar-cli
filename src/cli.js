@@ -15,6 +15,10 @@ ${ui.bold('Setup:')}
   config show                         Show config path and masked API key
   config reset                        Remove the saved API key
 
+${ui.bold('Agent Skills:')}
+  skill install [--target <all|agents|claude|opencode|codex|cursor>] [--force]
+                                              Install Mayar SKILL.md into AI agent directories
+
 ${ui.bold('Account:')}
   whoami                              Show identity behind the saved API key
   balance                             Get account balance
@@ -289,6 +293,7 @@ async function run(argv) {
       credit:       './commands/credit',
       credits:      './commands/credit',
       saas:         './commands/saas',
+      skill:        './commands/skill',
       software:     './commands/software',
       'payment-link':  './commands/payment-link',
       paymentlink:     './commands/payment-link',
