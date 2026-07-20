@@ -41,20 +41,42 @@ function clear() {
 }
 
 // Environment resolution -----------------------------------------------------
-// NODE_ENV=development targets the *.mayar.club sandbox; anything else targets
-// production *.mayar.id. Explicit env overrides always win.
+// Priority chain for endpoint resolution:
+//   1. Runtime override (setRuntimeEndpoint) — from --sandbox/--production flags
+//   2. NODE_ENV=development → sandbox
+//   3. Stored endpoint in config.json (defaults to 'production')
+//
+// Explicit env vars (MAYAR_API_URL / MAYAR_AUTH_URL) always take precedence
+// over the resolved endpoint for their respective base URLs.
+
+let _runtimeEndpoint = null;
+
+function setRuntimeEndpoint(ep) {
+  if (ep !== null && ep !== 'sandbox' && ep !== 'production') {
+    throw new Error(`Invalid endpoint: ${ep}. Must be 'sandbox', 'production', or null.`);
+  }
+  _runtimeEndpoint = ep;
+}
+
+function resolveEndpoint() {
+  if (_runtimeEndpoint !== null) return _runtimeEndpoint;
+  if (process.env.NODE_ENV === 'development') return 'sandbox';
+  const cfg = load();
+  return cfg?.endpoint || 'production';
+}
+
 function isDev() {
-  return process.env.NODE_ENV === 'development';
+  return resolveEndpoint() === 'sandbox';
 }
 
 function apiBaseUrl() {
   if (process.env.MAYAR_API_URL) return process.env.MAYAR_API_URL;
-  return isDev() ? 'https://api.mayar.club' : 'https://api.mayar.id';
+  return resolveEndpoint() === 'sandbox' ? 'https://api.mayar.club' : 'https://api.mayar.id';
 }
 
 function authBaseUrl() {
   if (process.env.MAYAR_AUTH_URL) return process.env.MAYAR_AUTH_URL;
-  return isDev() ? 'https://auth.mayar.club' : 'https://auth.mayar.id';
+  return resolveEndpoint() === 'sandbox' ? 'https://auth.mayar.club' : 'https://auth.mayar.id';
 }
 
-module.exports = { load, save, clear, file, dir, isDev, apiBaseUrl, authBaseUrl };
+module.exports = { load, save, clear, file, dir, isDev, apiBaseUrl, authBaseUrl, setRuntimeEndpoint, resolveEndpoint };
