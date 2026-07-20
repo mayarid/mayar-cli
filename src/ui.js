@@ -98,7 +98,51 @@ function table(rows, columns) {
   }
 }
 
+async function pickFromList(items, opts = {}) {
+  const { displayKey, descriptionKey } = opts;
+  const n = items.length;
+
+  // Render numbered list
+  for (let i = 0; i < n; i++) {
+    const item = items[i];
+    const display = item[displayKey] ?? '';
+    process.stdout.write(`${i + 1}. ${display}\n`);
+    if (descriptionKey && item[descriptionKey]) {
+      process.stdout.write(`   ${dim(item[descriptionKey])}\n`);
+    }
+  }
+
+  if (n === 0) {
+    process.stdout.write(dim('(no items)') + '\n');
+    return null;
+  }
+
+  // Prompt and validate in a loop
+  while (true) {
+    const answer = await ask('Pick a number (or q to quit): ');
+
+    if (answer === 'q' || answer === 'Q') {
+      return null;
+    }
+
+    const trimmed = answer.trim();
+    const num = parseInt(trimmed, 10);
+
+    if (isNaN(num) || String(num) !== trimmed) {
+      process.stdout.write(dim('Please enter a number or q to quit') + '\n');
+      continue;
+    }
+
+    if (num < 1 || num > n) {
+      process.stdout.write(dim(`Invalid selection (1-${n})`) + '\n');
+      continue;
+    }
+
+    return items[num - 1];
+  }
+}
+
 module.exports = {
-  printBanner, ask, askSecret, jsonOut, table,
+  printBanner, ask, askSecret, jsonOut, table, pickFromList,
   dim, bold, red, green, yellow, cyan, magenta,
 };
