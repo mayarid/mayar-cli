@@ -151,7 +151,7 @@ async function fetchOrGetLLMsTxt(refresh = false) {
     // Fetch failed — check for stale cache as fallback
     const stale = readStaleCache();
     if (stale !== null) {
-      process.stdout.write(
+      process.stderr.write(
         ui.dim('Using stale cache — could not refresh') + '\n',
       );
       return stale;
@@ -261,9 +261,10 @@ async function run(ctx) {
   } catch (err) {
     if (json) {
       ui.jsonOut({ error: err.message });
-    } else {
-      process.stderr.write(ui.red('Error: ' + err.message) + '\n');
+      process.exitCode = 1;
+      return;
     }
+    process.stderr.write(ui.red('Error: ' + err.message) + '\n');
     process.exit(1);
   }
 
@@ -277,26 +278,76 @@ async function run(ctx) {
     }
   }
 
-  // --json mode: delegate to task-006, keep minimal stub
+  // --json mode: short-circuit before any interactive or plain-text output
   if (json) {
     if (topic) {
+      const inputSlug = slugify(topic);
+      const inputLower = topic.toLowerCase();
       const matches = allTopics.filter(
         (t) =>
-          t.title.toLowerCase().includes(topic.toLowerCase()) ||
-          t.slug.includes(topic.toLowerCase()),
+          t.slug.includes(inputSlug) ||
+          t.title.toLowerCase().includes(inputLower),
       );
-      ui.jsonOut({ topic, matches });
-    } else {
+
+      if (matches.length === 0) {
+        // Zero matches: error with suggestions
+        const scored = allTopics
+          .map((t) => ({ slug: t.slug, score: similarityScore(topic, t.title) }))
+          .sort((a, b) => b.score - a.score);
+        const suggestions = scored
+          .slice(0, 3)
+          .filter((s) => s.score > 0)
+          .map((s) => s.slug);
+
+        ui.jsonOut({
+          error: `No documentation found for "${topic}"`,
+          suggestions,
+        });
+        process.exitCode = 1;
+        return;
+      }
+
+      if (matches.length === 1) {
+        // Single match: fetch page content and render
+        const m = matches[0];
+        try {
+          const html = await fetchPageContent(m.url);
+          const rendered = renderContent(html);
+          ui.jsonOut({
+            topic: m.slug,
+            title: m.title,
+            url: m.url,
+            content: rendered,
+          });
+        } catch (err) {
+          ui.jsonOut({ error: `Could not fetch page: ${err.message}` });
+          process.exitCode = 1;
+        }
+        return;
+      }
+
+      // Multiple matches: return match list, no prompt
       ui.jsonOut({
-        topics: allTopics.map((t) => ({
-          slug: t.slug,
-          title: t.title,
-          url: t.url,
-          description: t.description,
-          section: t.section,
+        matches: matches.map((m) => ({
+          topic: m.slug,
+          title: m.title,
+          url: m.url,
+          description: m.description,
         })),
       });
+      return;
     }
+
+    // No topic argument: output all topics
+    ui.jsonOut({
+      topics: allTopics.map((t) => ({
+        slug: t.slug,
+        title: t.title,
+        url: t.url,
+        description: t.description,
+        section: t.section,
+      })),
+    });
     return;
   }
 
