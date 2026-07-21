@@ -16,13 +16,18 @@ function decodeJwt(token) {
 }
 
 async function run({ flags }) {
+  if (!flags.json) {
+    ui.printBanner();
+    await ui.selectEnvironment(flags);
+  }
+
   const authUrl = config.authBaseUrl();
   const auth = new MayarAuth(authUrl);
 
   if (!flags.json) {
-    ui.printBanner();
     process.stdout.write(`${ui.bold('Sign in to Mayar')}\n`);
-    process.stdout.write(`${ui.dim('Auth server:')} ${authUrl}\n\n`);
+    process.stdout.write(`${ui.dim('Auth server:')} ${authUrl}\n`);
+    process.stdout.write(`${ui.dim('Endpoint:')} ${config.resolveEndpoint()}\n\n`);
     process.stdout.write('Opening your browser to complete Google sign-in…\n');
   }
 
@@ -50,6 +55,7 @@ async function run({ flags }) {
   const existing = config.load() || {};
   config.save({
     ...existing,
+    endpoint: config.resolveEndpoint(),
     auth: {
       authToken,
       refreshToken: refreshToken || null,
@@ -62,7 +68,7 @@ async function run({ flags }) {
   });
 
   if (flags.json) {
-    ui.jsonOut({ ok: true, email, name, expiresAt, authUrl });
+    ui.jsonOut({ ok: true, email, name, expiresAt, authUrl, endpoint: config.resolveEndpoint() });
     return;
   }
 

@@ -1,0 +1,139 @@
+{
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Infrastructure setup: test/ dir, package.json scripts, helpers",
+      "description": "Phase 1. Create top-level test/ directory and write test/helpers.js exporting reusable utilities: (1) stdout/stderr capture (monkey-patch process.stdout.write / console.log, return captured string, restore on cleanup); (2) temp XDG_CONFIG_HOME helper that creates a unique temp dir (node:os tmpdir + node:fs mkdtempSync) and returns {dir, cleanup}; (3) optional local node:http server helper that starts on an ephemeral port and returns {url, close}. Add scripts to package.json: \"test\": \"node --test\" and \"test:coverage\": \"node --test --experimental-test-coverage\". Acceptance: `npm test` runs node:test runner (zero exit even with no tests yet or with the suite), no new dependencies added to package.json. Use only built-in node: modules.",
+      "priority": 1,
+      "status": "completed",
+      "feature_id": "unit-testing-suite-mq6d7b96",
+      "skill": "library/testing/unit-testing-patterns",
+      "blocked_by": [],
+      "passes": true,
+      "files": [
+        "test/helpers.js",
+        "package.json"
+      ],
+      "started_at": null,
+      "completed_at": "2026-06-09T08:19:11.193Z",
+      "error_log": []
+    },
+    {
+      "id": "task-002",
+      "title": "Enable testability: export parseFlags from src/cli.js",
+      "description": "Phase 2. Make a minimal, additive change to src/cli.js so that parseFlags is exported via module.exports (e.g. module.exports.parseFlags = parseFlags, or add to existing exports object). Do NOT export or alter ensureKey or any interactive/process.exit/stdin code paths — keep them private. Do not change runtime behavior of the CLI. Acceptance: `require(\"../src/cli\").parseFlags` resolves to the function; existing CLI behavior unchanged.",
+      "priority": 1,
+      "status": "completed",
+      "feature_id": "unit-testing-suite-mq6d7b96",
+      "skill": null,
+      "blocked_by": [],
+      "passes": true,
+      "files": [
+        "src/cli.js"
+      ],
+      "started_at": null,
+      "completed_at": "2026-06-09T08:19:53.717Z",
+      "error_log": []
+    },
+    {
+      "id": "task-003",
+      "title": "Util tests: checkResp, readData, maybeJson",
+      "description": "Phase 3. Write test/util.test.js using node:test and node:assert/strict covering src/util.js. checkResp: 2xx response passes through; non-2xx throws an error carrying .status and .body. readData: covers its parsing/extraction behavior for expected inputs. maybeJson: returns parsed object for valid JSON, falls back to raw/string for non-JSON input. Use describe/test blocks. Acceptance: `npm test` passes; tests are mock-free and deterministic.",
+      "priority": 2,
+      "status": "completed",
+      "feature_id": "unit-testing-suite-mq6d7b96",
+      "skill": "library/testing/unit-testing-patterns",
+      "blocked_by": [
+        "task-001"
+      ],
+      "passes": true,
+      "files": [
+        "test/util.test.js"
+      ],
+      "started_at": null,
+      "completed_at": "2026-06-09T08:21:58.176Z",
+      "error_log": []
+    },
+    {
+      "id": "task-004",
+      "title": "CLI parse tests: exhaustive parseFlags coverage",
+      "description": "Phase 4. Write test/cli.test.js using node:test and node:assert/strict exhaustively exercising parseFlags exported from src/cli.js: long flags (--flag value), short flags (-f value), --key=value form, boolean flags, positional arguments, and mixed-order combinations. Assert resulting parsed structure for each case. Acceptance: `npm test` passes; covers each flag style with at least one explicit assertion.",
+      "priority": 2,
+      "status": "completed",
+      "feature_id": "unit-testing-suite-mq6d7b96",
+      "skill": "library/testing/unit-testing-patterns",
+      "blocked_by": [
+        "task-001",
+        "task-002"
+      ],
+      "passes": true,
+      "files": [
+        "test/cli.test.js"
+      ],
+      "started_at": null,
+      "completed_at": "2026-06-09T08:23:20.088Z",
+      "error_log": []
+    },
+    {
+      "id": "task-005",
+      "title": "Config round-trip tests under temp XDG_CONFIG_HOME",
+      "description": "Phase 5a. Write test/config.test.js using node:test and node:assert/strict. CRITICAL: set process.env.XDG_CONFIG_HOME to a temp dir (via test/helpers.js) BEFORE requiring src/config.js, since config path is computed at module load. Cover load/save/clear round-trip (save then load returns same data; clear removes it) and legacy migration path if present. Clean up temp dir after. Acceptance: `npm test` passes; no writes to the real home/config dir.",
+      "priority": 3,
+      "status": "completed",
+      "feature_id": "unit-testing-suite-mq6d7b96",
+      "skill": "library/testing/unit-testing-patterns",
+      "blocked_by": [
+        "task-001"
+      ],
+      "passes": true,
+      "files": [
+        "test/config.test.js"
+      ],
+      "started_at": null,
+      "completed_at": "2026-06-09T08:25:34.075Z",
+      "error_log": []
+    },
+    {
+      "id": "task-006",
+      "title": "UI tests: table() and color wrappers in non-TTY mode",
+      "description": "Phase 5b. Write test/ui.test.js using node:test and node:assert/strict covering src/ui.js table() and color wrapper functions. Assert that in non-TTY mode output is plain (no ANSI escape codes) and that table() produces correctly formatted rows/columns. Ensure non-TTY by checking the module respects process.stdout.isTTY being falsy (the test runner is non-TTY). Acceptance: `npm test` passes; assertions confirm absence of ANSI codes and correct table layout.",
+      "priority": 3,
+      "status": "completed",
+      "feature_id": "unit-testing-suite-mq6d7b96",
+      "skill": "library/testing/unit-testing-patterns",
+      "blocked_by": [
+        "task-001"
+      ],
+      "passes": true,
+      "files": [
+        "test/ui.test.js"
+      ],
+      "started_at": null,
+      "completed_at": "2026-06-09T08:27:42.498Z",
+      "error_log": []
+    },
+    {
+      "id": "task-007",
+      "title": "Wire-up pre-commit hook and document coverage reality",
+      "description": "Phase 6. Update the pre-commit hook (pre_commit in .jonggrang/jonggrang.json hooks, currently \"echo no test command configured\") to run the new test command `node --test`. Append to .jonggrang/progress.txt: the coverage reality (80% threshold intentionally not met by this pure-function first pass) and follow-up options (command-level mocking, local HTTP integration tests). Acceptance: pre-commit runs the suite; progress.txt records the gap and next layers.",
+      "priority": 4,
+      "status": "completed",
+      "feature_id": "unit-testing-suite-mq6d7b96",
+      "skill": null,
+      "blocked_by": [
+        "task-003",
+        "task-004",
+        "task-005",
+        "task-006"
+      ],
+      "passes": true,
+      "files": [
+        ".jonggrang/jonggrang.json",
+        ".jonggrang/progress.txt"
+      ],
+      "started_at": null,
+      "completed_at": "2026-06-09T08:29:03.723Z",
+      "error_log": []
+    }
+  ]
+}

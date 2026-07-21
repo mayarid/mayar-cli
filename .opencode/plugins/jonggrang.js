@@ -5,7 +5,7 @@ let createPlugin;
 try {
   createPlugin = require('jonggrang/hooks/opencode/plugin').createPlugin;
 } catch(e) {
-  createPlugin = require("/usr/lib/node_modules/jonggrang/hooks/opencode/plugin.js").createPlugin;
+  createPlugin = require("/Users/delegasi/Documents/Mayar/jonggrang/hooks/opencode/plugin.js").createPlugin;
 }
 // createPlugin returns { id, server, stub } — OpenCode calls server() when id is present
 module.exports = createPlugin(projectRoot);

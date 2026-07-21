@@ -11,9 +11,18 @@ ${ui.bold('Usage:')}
 ${ui.bold('Setup:')}
   init                                Run first-time setup (or re-configure API key)
   login [--no-browser]                Sign in via browser (Google OAuth) and save auth token
+  status                              Show active environment, user identity, and API key status
   api-key <key>                       Save API key non-interactively
   config show                         Show config path and masked API key
   config reset                        Remove the saved API key
+
+${ui.bold('Agent Skills:')}
+  skill install [--target <all|agents|claude|opencode|codex|cursor>] [--force]
+                                              Install Mayar SKILL.md into AI agent directories
+
+${ui.bold('Documentation:')}
+  docs [topic] [--section S] [--limit N] [--compact] [--all] [--json] [--refresh]
+                                              Browse Mayar API docs in terminal (with filtering & ranking)
 
 ${ui.bold('Account:')}
   whoami                              Show identity behind the saved API key
@@ -130,10 +139,14 @@ ${ui.bold('Webhooks:')}
 ${ui.bold('Global flags:')}
   --json                Output raw JSON instead of formatted tables
   --api-key <key>       Use this API key for the run (overrides env + saved config)
+  --sandbox             Target the sandbox environment (api.mayar.club)
+  --production          Target the production environment (api.mayar.id)
+  --env <value>         Target environment: sandbox or production
   --limit N             Page size (v2, default 10, max 50)
   --after CURSOR        Cursor for next page (from previous response's nextStartingAfter)
   --pageSize N          Alias for --limit
   --data <json|@file>   Inline JSON or @path to a JSON file
+  --refresh             Force re-fetch cached data (docs command)
   -h, --help            Show help
   -v, --version         Show version
 
@@ -144,8 +157,8 @@ ${ui.bold('Environment:')}
   NODE_ENV=development  Target the sandbox (api/auth .mayar.club) instead of production
 
 ${ui.dim('Resolution order: --api-key flag > MAYAR_API_KEY env > saved config.')}
-${ui.dim('API endpoint:  MAYAR_API_URL, else NODE_ENV=development → api.mayar.club, else api.mayar.id')}
-${ui.dim('Auth endpoint: MAYAR_AUTH_URL, else NODE_ENV=development → auth.mayar.club, else auth.mayar.id')}
+${ui.dim('Endpoint: --sandbox/--production/--env > NODE_ENV=development > stored endpoint (default production).')}
+${ui.dim('Priority:  invocation flags → NODE_ENV → config.json → production (default)')}
 ${ui.dim('Config:   ~/.config/mayar/config.json (chmod 600)')}
 `;
 
@@ -157,7 +170,13 @@ function parseFlags(argv) {
     if (a === '--') { positional.push(...argv.slice(i + 1)); break; }
     if (a === '--json') flags.json = true;
     else if (a === '--force') flags.force = true;
+    else if (a === '--refresh') flags.refresh = true;
+    else if (a === '--compact') flags.compact = true;
+    else if (a === '--all') flags.all = true;
+    else if (a === '--section' || a === '--category') flags.section = argv[++i];
     else if (a === '--no-browser') flags['no-browser'] = true;
+    else if (a === '--sandbox') flags.sandbox = true;
+    else if (a === '--production') flags.production = true;
     else if (a === '--api-key') flags.apiKey = argv[++i];
     else if (a.startsWith('--api-key=')) flags.apiKey = a.slice('--api-key='.length);
     else if (a === '--page') flags.page = argv[++i];
@@ -165,6 +184,7 @@ function parseFlags(argv) {
     else if (a === '--limit') flags.limit = argv[++i];
     else if (a === '--after' || a === '--starting-after' || a === '--startingAfter') flags.after = argv[++i];
     else if (a === '--data') flags.data = argv[++i];
+    else if (a === '--env') flags.env = argv[++i];
     else if (a === '-h' || a === '--help') flags.help = true;
     else if (a === '-v' || a === '--version') flags.version = true;
     else if (a.startsWith('--')) {
@@ -183,22 +203,43 @@ async function ensureKey(flags) {
   if (process.env.MAYAR_API_KEY) return process.env.MAYAR_API_KEY;
   const cfg = config.load();
   if (cfg && cfg.apiKey) return cfg.apiKey;
+  if (cfg && cfg.auth && cfg.auth.authToken) return cfg.auth.authToken;
   ui.printBanner();
-  process.stdout.write(`${ui.bold('Welcome to Mayar CLI.')}\n`);
-  process.stdout.write(`No API key found. Get yours from ${ui.cyan('https://web.mayar.id')} → Integration → API Key.\n\n`);
+  const endpoint = await ui.selectEnvironment(flags);
+  const webUrl = endpoint === 'sandbox' ? 'https://web.mayar.club' : 'https://web.mayar.id';
+  process.stdout.write('\n' + `${ui.bold('Welcome to Mayar CLI.')}\n`);
+  process.stdout.write(`No API key found. Get yours from ${ui.cyan(webUrl)} → Integration → API Key.\n\n`);
   if (!process.stdin.isTTY) {
     process.stderr.write(ui.red('Stdin is not a TTY — cannot prompt. Run `mayar init` interactively or pass --api-key.\n'));
     process.exit(1);
   }
-  const key = await ui.askSecret(ui.bold('Paste your production API key: '));
+  const key = await ui.askSecret(ui.bold(`Paste your ${endpoint} API key: `));
   if (!key.trim()) { process.stderr.write(ui.red('No key provided. Aborting.\n')); process.exit(1); }
-  config.save({ apiKey: key.trim(), endpoint: 'production', savedAt: new Date().toISOString() });
+  config.save({ apiKey: key.trim(), endpoint, savedAt: new Date().toISOString() });
   process.stdout.write(ui.green(`✓ Saved to ${config.file}`) + '\n\n');
   return key.trim();
 }
 
 async function run(argv) {
   const { flags, positional } = parseFlags(argv);
+
+  // Resolve endpoint override from flags
+  if (flags.sandbox && flags.production) {
+    process.stderr.write(ui.red('Error: --sandbox and --production cannot be used together.\n'));
+    process.exit(1);
+  }
+  if (flags.sandbox) config.setRuntimeEndpoint('sandbox');
+  else if (flags.production) config.setRuntimeEndpoint('production');
+  else if (flags.env) {
+    const v = flags.env.toLowerCase();
+    if (v !== 'sandbox' && v !== 'production') {
+      process.stderr.write(ui.red(`Error: Invalid --env value: ${flags.env}. Must be 'sandbox' or 'production'.\n`));
+      process.exit(1);
+    }
+    config.setRuntimeEndpoint(v);
+  } else {
+    config.setRuntimeEndpoint(null);
+  }
 
   if (flags.version) { process.stdout.write(VERSION + '\n'); return; }
   if (!positional.length || (flags.help && !positional.length)) { process.stdout.write(HELP()); return; }
@@ -209,6 +250,8 @@ async function run(argv) {
     if (cmd === 'help') { process.stdout.write(HELP()); return; }
     if (cmd === 'init') { return await require('./commands/init').run({ flags }); }
     if (cmd === 'login') { return await require('./commands/login').run({ flags }); }
+    if (cmd === 'status') { return await require('./commands/status').run({ flags }); }
+    if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
     if (cmd === 'api-key' || cmd === 'apikey') {
       return await require('./commands/apikey').run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
     }
@@ -254,6 +297,7 @@ async function run(argv) {
       reviews:      './commands/review',
       discount:     './commands/discount',
       discounts:    './commands/discount',
+      docs:         './commands/docs',
       coupon:       './commands/discount',
       coupons:      './commands/discount',
       bundling:     './commands/bundling',
@@ -265,6 +309,7 @@ async function run(argv) {
       credit:       './commands/credit',
       credits:      './commands/credit',
       saas:         './commands/saas',
+      skill:        './commands/skill',
       software:     './commands/software',
       'payment-link':  './commands/payment-link',
       paymentlink:     './commands/payment-link',

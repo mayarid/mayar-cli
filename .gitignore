@@ -9,3 +9,4 @@ node_modules/
 .jonggrang/.ephemeral/
 .jonggrang/locks/
 .jonggrang/.worktree/
+.jonggrang/.drafts/

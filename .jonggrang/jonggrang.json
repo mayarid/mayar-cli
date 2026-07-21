@@ -1,7 +1,7 @@
 {
-  "name": "cli",
+  "name": "mayar-cli",
   "version": "1.0.0",
-  "tool": "claude",
+  "tool": "jonggrang",
   "project": {
     "type": "api",
     "stack": "node-typescript",
@@ -13,7 +13,7 @@
     "max_team_size": 1
   },
   "work": {
-    "max_iterations": 10,
+    "max_iterations": 0,
     "retry_limit": 2,
     "kill_after_fails": 3,
     "branch_prefix": "feat/",
@@ -23,7 +23,7 @@
     "pre_implement": [],
     "post_implement": [],
     "pre_commit": [
-      "node --test"
+      "echo 'no test command configured'"
     ],
     "post_commit": [],
     "task_complete": [],

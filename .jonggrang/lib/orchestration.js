@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { execSync } = require('child_process');
 const locks = require('./locks');
 const { estimateTokens } = require('./compaction');
 
@@ -42,6 +43,27 @@ const PHASE_SKIP_MAP = {
   SMALL: new Set([5, 6, 7, 10]),              // no complexity analysis, no design-verification (simplification runs for SMALL+)
   MEDIUM: new Set([]),                           // nothing skipped
   LARGE: new Set([]),                           // all 17 phases including simplification
+};
+
+// Maps orchestrate phase numbers → memory recall hint key (used by
+// buildMemoryPolicyPrompt to pick the natural query hint for that phase).
+// Phase 8 (implementation) is excluded — it uses buildWorkPrompt which already
+// injects memory policy. Phase 1 (setup) and 2 (triage) are deterministic.
+const PHASE_MEMORY_HINT = {
+  3: 'plan',        // codebase-discovery — what patterns exist
+  4: 'plan',        // skill-discovery — what skills map to patterns
+  5: 'simplify',    // complexity — what pitfalls to weigh
+  6: 'plan',        // brainstorming — what decisions are established
+  7: 'plan',        // architecting — what architectural decisions exist
+  9: 'simplify',    // simplification — what to simplify
+  10: 'review',     // design-verification — full picture check
+  11: 'review',     // domain-compliance — pattern compliance
+  12: 'review',     // code-quality — maintainability review
+  13: 'test',       // test-planning — what failed before
+  14: 'test',       // testing — what to cover
+  15: 'test',       // coverage — what's missing
+  16: 'test',       // test-quality — assertion quality
+  17: 'review',     // completion — final verification
 };
 
 // ============================================================
@@ -176,6 +198,7 @@ function createManifest(projectRoot, featureId, description, workType) {
       completed_at: null,
       agent_id: null,
       output: null,
+      output_files: [],      // files this phase produced — see addOutputFile()
     };
   }
 
@@ -203,9 +226,15 @@ function startPhase(manifestPath, phaseNum) {
 }
 
 /**
- * Mark a phase as completed with optional output.
+ * Mark a phase as completed with optional output and output files.
+ * @param {string} manifestPath
+ * @param {number} phaseNum
+ * @param {object|null} output - phase-level metadata (existing behavior)
+ * @param {Array<{path:string,type?:string,size?:number,created_at?:string,agent_id?:string,task_id?:string}>|null} outputFiles
+ *   - optional list of files produced by this phase. Backward compatible:
+ *     existing 3-arg callers keep working unchanged.
  */
-function completePhase(manifestPath, phaseNum, output = null) {
+function completePhase(manifestPath, phaseNum, output = null, outputFiles = null) {
   const manifest = readManifest(manifestPath);
   if (!manifest) throw new Error(`MANIFEST not found at ${manifestPath}`);
 
@@ -227,7 +256,111 @@ function completePhase(manifestPath, phaseNum, output = null) {
 
   manifest.updated_at = new Date().toISOString();
   writeManifest(manifestPath, manifest);
+
+  // Record output files after marking complete (each does its own read/write).
+  if (Array.isArray(outputFiles) && outputFiles.length > 0) {
+    addOutputFiles(manifestPath, phaseNum, outputFiles);
+    return readManifest(manifestPath);
+  }
   return manifest;
+}
+
+// Re-open the EXECUTION phases (>= phase 8: Implement + post-work gates) of a
+// COMPLETED feature so `work` runs newly-added tasks instead of seeing phase 8
+// "completed" and skipping to post-work. Planning phases (1-7) stay done. Used
+// when tasks are added to an already-approved/completed feature — by `plan --append`
+// (approve) and `bug convert`. Returns true if anything changed.
+function reopenExecutionPhases(manifestPath) {
+  const manifest = readManifest(manifestPath);
+  if (!manifest) return false;
+  let changed = false;
+  for (const n of (manifest.active_phases || [])) {
+    if (n >= 8 && manifest.phases?.[n]?.status === 'completed') {
+      manifest.phases[n].status = 'pending';
+      manifest.phases[n].completed_at = null;
+      changed = true;
+    }
+  }
+  if (changed || manifest.status === 'completed') {
+    manifest.status = 'in_progress';
+    manifest.updated_at = new Date().toISOString();
+    writeManifest(manifestPath, manifest);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Record a single output file produced by a phase.
+ * Idempotent on `path` within the phase (last write wins).
+ * size/created_at are always filled from the filesystem — never trusted from the caller.
+ *
+ * @param {string} manifestPath
+ * @param {number} phaseNum
+ * @param {{path:string,type?:string,agent_id?:string,task_id?:string}} fileEntry
+ * @returns {object} the stored entry (with size/created_at filled)
+ */
+function addOutputFile(manifestPath, phaseNum, fileEntry) {
+  const manifest = readManifest(manifestPath);
+  if (!manifest) throw new Error(`MANIFEST not found at ${manifestPath}`);
+  if (!manifest.phases[phaseNum]) {
+    throw new Error(`Phase ${phaseNum} not found in manifest (active phases: ${Object.keys(manifest.phases).join(', ')})`);
+  }
+  if (!fileEntry || typeof fileEntry.path !== 'string' || fileEntry.path.trim() === '') {
+    throw new Error('addOutputFile: fileEntry.path must be a non-empty string');
+  }
+
+  const relPath = fileEntry.path.trim();
+  const projectRoot = getProjectRootFromManifest(manifestPath);
+  const absPath = path.resolve(projectRoot, relPath);
+
+  // Always derive size/created_at from disk; null if the file no longer exists.
+  let size = null;
+  let createdAt = fileEntry.created_at || null;
+  try {
+    const stat = fs.statSync(absPath);
+    size = stat.size;
+    if (!createdAt) createdAt = stat.mtime.toISOString();
+  } catch {
+    // file missing at record time — keep size null
+  }
+
+  const entry = {
+    path: relPath,
+    type: (typeof fileEntry.type === 'string' && fileEntry.type.trim()) ? fileEntry.type.trim() : 'output',
+    size,
+    created_at: createdAt,
+  };
+  if (fileEntry.agent_id) entry.agent_id = fileEntry.agent_id;
+  if (fileEntry.task_id) entry.task_id = fileEntry.task_id;
+
+  const phase = manifest.phases[phaseNum];
+  if (!Array.isArray(phase.output_files)) phase.output_files = [];
+
+  // Idempotent on path: replace existing entry for the same path.
+  const existingIdx = phase.output_files.findIndex(e => e && e.path === relPath);
+  if (existingIdx >= 0) {
+    phase.output_files[existingIdx] = entry;
+  } else {
+    phase.output_files.push(entry);
+  }
+
+  manifest.updated_at = new Date().toISOString();
+  writeManifest(manifestPath, manifest);
+  return entry;
+}
+
+/**
+ * Bulk variant of addOutputFile. Records each entry, returns the stored entries.
+ * @returns {object[]}
+ */
+function addOutputFiles(manifestPath, phaseNum, fileEntries) {
+  if (!Array.isArray(fileEntries)) return [];
+  const stored = [];
+  for (const fileEntry of fileEntries) {
+    stored.push(addOutputFile(manifestPath, phaseNum, fileEntry));
+  }
+  return stored;
 }
 
 /**
@@ -262,6 +395,9 @@ function updateContextUsage(manifestPath, usageRatio) {
 
 /**
  * Register an agent run in manifest and optionally acquire file locks.
+ * @param {string|null} outputPath - DEPRECATED: per-file tracking now lives in
+ *   `phases[n].output_files[]` via addOutputFile(). The `output_path` field is
+ *   retained for backward compatibility but should not be relied on for new code.
  * @param {string[]} lockedFiles - files this agent will exclusively modify
  */
 function registerAgent(manifestPath, agentId, role, outputPath = null, lockedFiles = []) {
@@ -577,13 +713,53 @@ function planSimplify(manifest, projectRoot) {
  * Generate a phase context block to inject into agent prompts.
  * Tells the agent which phase it's running and what's been done.
  */
-function buildPhaseContext(manifest, currentPhaseNum) {
+// Phases that must emit an OUTPUT_FILES: block so the manifest can track what they produced.
+// Phase 8  = implementation (developer writes code files)
+// Phase 12 = code-quality   (reviewer writes a review report)
+// Phase 14 = testing        (tester writes test files)
+// Phases whose file outputs are tracked via git diff after the phase completes.
+const OUTPUT_TRACKING_PHASES = new Set([8, 12, 14]);
+
+function buildPhaseContext(manifest, currentPhaseNum, projectRoot) {
   const phase = PHASES[currentPhaseNum];
   if (!phase) return '';
 
   const completedPhases = manifest.active_phases
     .filter(n => manifest.phases[n] && manifest.phases[n].status === 'completed')
     .map(n => `  - Phase ${n} (${PHASES[n].name}): ✓`);
+
+  // Inject a deterministic codebase map (LLM-free, cached). Gives every
+  // fresh-context agent an immediate project orientation. Mirrors pi-compass.
+  // Heavy on phase 3 (codebase-discovery) and phase 8 (implementation);
+  // skipped for the simplify phase (it already gets a per-file diff payload).
+  let codemapBlock = '';
+  if (projectRoot && currentPhaseNum !== 9) {
+    try {
+      const codemap = require('./codemap');
+      const { codemap: cm, stale } = codemap.getOrGenerateCodemap(projectRoot);
+      if (cm) {
+        const maxChars = (currentPhaseNum === 3 || currentPhaseNum === 8) ? 3500 : 2000;
+        codemapBlock = `\n\n## Project Context (codemap)\n\n${codemap.formatCodemapMarkdown(cm, { maxChars })}`;
+        if (stale) codemapBlock += `\n\n> ⚠️ Codemap may be outdated (project changed since ${cm.generatedAt}).`;
+      }
+    } catch { /* best-effort */ }
+  }
+
+  // Inject memory policy so every phase agent knows how to access project/feature
+  // memory (recall for bounded search, read for full inspection). Phase 1 (setup)
+  // and 2 (triage) are deterministic — no agent, no memory needed. Phase 8
+  // (implementation) uses buildWorkPrompt which already injects memory policy,
+  // so skip here to avoid double-injecting. (#79)
+  let memoryBlock = '';
+  if (projectRoot && currentPhaseNum >= 3 && currentPhaseNum !== 8) {
+    try {
+      const memory = require('./memory');
+      const hintKey = PHASE_MEMORY_HINT[currentPhaseNum];
+      memoryBlock = '\n\n' + memory.buildMemoryPolicyPrompt(hintKey, {
+        featureId: manifest.feature_id || manifest.featureId || null,
+      });
+    } catch { /* best-effort — memory optional */ }
+  }
 
   return [
     `## Orchestration Context`,
@@ -593,13 +769,38 @@ function buildPhaseContext(manifest, currentPhaseNum) {
     `Phase Purpose: ${phase.description}`,
     completedPhases.length > 0 ? `\nCompleted phases:\n${completedPhases.join('\n')}` : '',
     `\nReturn structured JSON with { phase: ${currentPhaseNum}, status: "completed"|"failed", output: {...} }`,
+    codemapBlock,
+    memoryBlock,
   ].filter(Boolean).join('\n');
+}
+
+/**
+ * Returns files changed since beforeSha (committed, staged, unstaged, and untracked).
+ * Uses two commands: git diff for committed changes, git status --porcelain for working tree.
+ * @param {string} projectRoot
+ * @param {string} beforeSha - git SHA captured before the phase ran
+ * @returns {Array<{path:string, type:string}>}
+ */
+function getChangedFiles(projectRoot, beforeSha) {
+  const opts = { cwd: projectRoot, encoding: 'utf8' };
+  const files = new Set();
+  const collect = (cmd) => {
+    try {
+      const out = execSync(cmd, opts).trim();
+      if (out) out.split('\n').forEach(f => { const t = f.trim(); if (t) files.add(t); });
+    } catch {}
+  };
+  // Both commands are scoped to beforeSha — no leakage between phases
+  collect(`git diff --name-only ${beforeSha}..HEAD`); // committed since beforeSha
+  collect(`git diff --name-only ${beforeSha}`);        // staged + unstaged vs beforeSha
+  return Array.from(files).map(p => ({ path: p, type: 'code' }));
 }
 
 module.exports = {
   PHASES,
   HEAVY_PHASES,
   PHASE_SKIP_MAP,
+  OUTPUT_TRACKING_PHASES,
   classifyWorkType,
   getActivePhases,
   getManifestPath,
@@ -609,6 +810,10 @@ module.exports = {
   createManifest,
   startPhase,
   completePhase,
+  reopenExecutionPhases,
+  addOutputFile,
+  addOutputFiles,
+  getChangedFiles,
   failPhase,
   updateContextUsage,
   registerAgent,

@@ -1,0 +1,120 @@
+{
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Add pickFromList() interactive selection helper to src/ui.js",
+      "description": "Add a pickFromList(items, { displayKey, descriptionKey }) function to src/ui.js that renders a numbered list, prompts the user to pick an item (or 'q' to quit), validates input, and returns the selected item or null. Implementation: (1) Render each item with its 1-based index + display value (from displayKey). (2) If descriptionKey is provided, render descriptions in dim below each item. (3) Use the existing ask() readline pattern from ui.js to prompt 'Pick a number (or q to quit): '. (4) Validate in a loop: reject non-numeric/NaN input with a message and re-prompt; reject out-of-range numbers with 'Invalid selection (1-N)'; accept 'q' or 'Q' to return null. (5) Return the selected item object on valid numeric selection. (6) Export via module.exports alongside existing exports. Acceptance: calling pickFromList([{name:'A'},{name:'B'}], {displayKey:'name'}) renders a numbered list and returns the selected item on valid numeric input, or null on 'q'.",
+      "priority": 1,
+      "status": "completed",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [],
+      "passes": true,
+      "files": [
+        "src/ui.js"
+      ],
+      "started_at": "2026-07-20T10:47:11.020Z",
+      "completed_at": "2026-07-20T10:48:19.779Z",
+      "error_log": []
+    },
+    {
+      "id": "task-002",
+      "title": "Create docs command module: llms.txt fetch, parse, and cache infrastructure",
+      "description": "Create src/commands/docs.js with the core infrastructure for the mayar docs command. Implement: (1) getCacheDir() — returns path.join(config.dir, 'cache'), creating the directory with fs.mkdirSync if it does not exist (recursive, mode 0o700). (2) getCachedLLMsTxt() — reads ~/.config/mayar/cache/llms.txt and ~/.config/mayar/cache/llms-meta.json; checks whether the llms-meta.json fetchedAt timestamp is within 24 hours (Date.now() - new Date(fetchedAt).getTime() < 86400000); returns the cached text if valid, or null if missing/expired. (3) fetchLLMsTxt() — uses https.get to fetch https://docs.mayar.id/llms.txt (User-Agent: mayar-cli/<version>). Set a 10s timeout; follow redirects (301/302) up to 3 hops. On success, write the raw response body to ~/.config/mayar/cache/llms.txt and write { fetchedAt: new Date().toISOString() } to ~/.config/mayar/cache/llms-meta.json; return the raw text. On failure, throw. (4) fetchOrGetLLMsTxt(refresh) — if refresh is true, skip cache and call fetchLLMsTxt(); otherwise call getCachedLLMsTxt(); if null, call fetchLLMsTxt(). If fetch fails and no cache exists, throw with a clear error message including 'Visit https://docs.mayar.id for manual browsing'. If fetch fails but stale cache exists, print a ui.dim warning ('Using stale cache — could not refresh') and return the stale content. (5) parseTitleUrl(line) — takes a Markdown list item line like '- [Create Invoice](https://docs.mayar.id/api/invoice/create)' and returns { title, url } or null if no match. (6) slugify(title) — converts title to a dashed-lowercase slug: lowercase, replace [^a-z0-9]+ with '-', trim leading/trailing dashes. (7) parseLLMsTxt(raw) — parses the llms.txt Markdown into a structured topic map. Sections are identified by lines matching /^## (.+)$/ (e.g., '## Docs', '## OpenAPI Specs'). Each subsequent '- [Title](URL) - description' line becomes a topic entry with: slug (slugify(title)), title, url, description, section (the parent heading name). Returns { sections: [{ name, topics: [{slug, title, url, description, section}] }] }. Skip empty sections. Export: module.exports = { run, parseLLMsTxt, slugify, parseTitleUrl, fetchOrGetLLMsTxt }.",
+      "priority": 2,
+      "status": "completed",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-001"
+      ],
+      "passes": true,
+      "files": [
+        "src/commands/docs.js",
+        "src/cli.js"
+      ],
+      "started_at": "2026-07-20T10:50:40.651Z",
+      "completed_at": "2026-07-20T10:51:53.414Z",
+      "error_log": []
+    },
+    {
+      "id": "task-003",
+      "title": "Add content fetcher and HTML renderer to docs command",
+      "description": "Implement fetchPageContent(url) and renderContent(html) in src/commands/docs.js. (1) fetchPageContent(url) — uses https.get to retrieve the documentation page HTML. Set a 10-second timeout via req.setTimeout(); on timeout, call req.destroy() and reject/throw with 'Request timed out'. Follow redirects (status 301/302/307/308) by reading the Location header and issuing a new request, up to 3 redirect hops; throw on redirect loop. Return the response body as a UTF-8 string on 2xx status; throw with status code on non-2xx. Use the User-Agent header 'mayar-cli/<version>'. (2) renderContent(html) — extracts the main content region and formats for terminal output: (a) Extract: look for <main>...</main> or <article>...</article> using regex; fallback: <div class=\"[^\"]*content[^\"]*\">...</div>; final fallback: the entire <body> content. (b) Strip all HTML tags via replace(/<[^>]*>/g, ''). (c) Decode common HTML entities: &amp; → &, &lt; → <, &gt; → >, &quot; → \", &#39; → ', &nbsp; → ' ', &#x2F; → /. (d) Collapse 3+ consecutive newlines into 2. (e) Trim leading/trailing whitespace per line. (f) Apply terminal formatting to the extracted text: detect markdown headings (lines starting with #) and wrap them in ui.bold(); detect code fences and indent content between them by 2 spaces; detect horizontal rules (--- or ***) and render as ui.dim dashes. Return the formatted string (do NOT print directly — let the caller decide). Acceptance: given a sample HTML snippet like '<main><h1>Hello</h1><p>World</p></main>', renderContent returns a string with bold heading and plain paragraph. Export: add fetchPageContent and renderContent to module.exports.",
+      "priority": 3,
+      "status": "completed",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-002"
+      ],
+      "passes": true,
+      "files": [
+        "src/commands/docs.js"
+      ],
+      "started_at": "2026-07-20T10:53:45.083Z",
+      "completed_at": "2026-07-20T10:54:54.676Z",
+      "error_log": []
+    },
+    {
+      "id": "task-004",
+      "title": "Implement docs command UX: interactive, keyword, non-TTY, and topic resolution",
+      "description": "Implement the run() function and all UX paths in src/commands/docs.js. The run(ctx) function receives { flags, positional } where positional is the topic keyword (e.g., ['invoice']) or empty []. Implementation: (1) Call fetchOrGetLLMsTxt(flags.refresh) to get the llms.txt content, then parseLLMsTxt() to build the section-structured topic index. (2) Build a flat allTopics array by concatenating all section.topics for lookup/filtering. (3) Topic resolution (when positional[0] is provided): normalize the input via slugify(). Find matches where the input slug is a substring of the topic slug OR the input is a case-insensitive substring of the topic title. If exactly 1 match: fetch the page content via fetchPageContent(url), render via renderContent(), print header (ui.bold(title) + ' — ' + ui.cyan(url)), print the rendered content, print ui.dim('───'). If multiple matches: print a numbered list of matches with title, section in dim, and description. If no match: print 'No documentation found for \"<input>\"' followed by a 'Did you mean?' suggestion — implement simple fuzzy matching: for each topic, compute a similarity score (prefix match bonus + shared character count) and suggest the top 3 closest titles. (4) No-argument TTY mode (process.stdout.isTTY): show section headers as ui.bold(section.name), flatten topics into a single list, call pickFromList(items, { displayKey: 'title', descriptionKey: 'description' }); if user picked an item, fetchPageContent + renderContent for the chosen topic's URL and display it; if null (quit), exit silently. (5) No-argument non-TTY mode (piped): print a plain-text categorized listing: section headers as '## SectionName', each topic as '  - Title — description'. Do not prompt. (6) All output goes to process.stdout.write. Use ui.dim, ui.bold, ui.cyan, ui.red from src/ui.js. Note: the --json paths are handled separately in task-006; in this task, if flags.json is true, delegate to the JSON handler (or skip and let task-006 wire it). Export the full module.exports.",
+      "priority": 4,
+      "status": "completed",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-001",
+        "task-002",
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "src/commands/docs.js"
+      ],
+      "started_at": "2026-07-20T10:56:11.259Z",
+      "completed_at": "2026-07-20T10:57:52.091Z",
+      "error_log": []
+    },
+    {
+      "id": "task-005",
+      "title": "Register docs command in CLI, add help text, and parse --refresh flag",
+      "description": "Wire the docs command into the CLI by making three targeted changes to src/cli.js: (1) Add 'docs' to the handlers map in the run() function: handlers.docs = './commands/docs' (alongside the existing entries, placed alphabetically or at the end of the map). (2) Add a Documentation section to the HELP() template string. Place it right after the Setup section for visibility. Format: `${ui.bold('Documentation:')}\\n  docs [topic] [--json] [--refresh]        Browse Mayar API docs in the terminal\\n`. Also add the --refresh flag description in the Global flags section: `  --refresh             Force re-fetch cached data (docs command)\\n` placed after the existing --data flag line. (3) Add --refresh parsing in parseFlags(): add `else if (a === '--refresh') flags.refresh = true;` before the generic '--' handler (i.e., before the `else if (a.startsWith('--'))` block). Do NOT modify any other behavior — all existing commands and flag parsing must continue working. Acceptance: running `mayar docs` invokes the docs command module; `mayar --help` shows the Documentation section with the docs entry; `mayar docs --refresh` sets flags.refresh = true before the docs command runs.",
+      "priority": 5,
+      "status": "completed",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-002"
+      ],
+      "passes": true,
+      "files": [
+        "src/cli.js"
+      ],
+      "started_at": "2026-07-20T10:59:06.586Z",
+      "completed_at": "2026-07-20T10:59:33.109Z",
+      "error_log": []
+    },
+    {
+      "id": "task-006",
+      "title": "Implement --json output mode for docs command",
+      "description": "Add JSON output mode to the docs command in src/commands/docs.js. In the run() function, when flags.json is true, short-circuit before any interactive or plain-text output: (1) No topic argument (positional is empty): build the flat topics array from parseLLMsTxt output, then call ui.jsonOut({ topics: arrayOfAllTopics }) where each entry is { slug, title, url, description, section }. Return immediately — no fetch, no prompt. (2) Topic argument with exactly one match: call fetchPageContent(matchedTopic.url), then call renderContent() on the HTML, then call ui.jsonOut({ topic: matchedTopic.slug, title: matchedTopic.title, url: matchedTopic.url, content: renderedText }). Return. (3) Topic argument with multiple matches: call ui.jsonOut({ matches: arrayOfMatches }) where each is { topic: slug, title, url, description }. Return — do not prompt the user to pick. (4) Topic argument with zero matches: call ui.jsonOut({ error: 'No documentation found for \"<input>\"', suggestions: [top3ClosestSlugs] }). Set process.exitCode = 1 but do NOT call process.exit(). Return. In all JSON paths, write output ONLY via ui.jsonOut() to stdout — no other stdout writes. Warnings (stale cache, etc.) may go to stderr via process.stderr.write. Acceptance: 'mayar docs --json' prints { topics: [...] }; 'mayar docs invoice --json' with exact match prints { topic, title, url, content }; multi-match prints { matches: [...] }; no-match prints { error, suggestions }.",
+      "priority": 5,
+      "status": "completed",
+      "feature_id": "login-env-and-skill-install-mrsuauk9",
+      "skill": null,
+      "blocked_by": [
+        "task-002",
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "src/commands/docs.js"
+      ],
+      "started_at": "2026-07-20T11:01:08.150Z",
+      "completed_at": "2026-07-20T11:02:03.111Z",
+      "error_log": []
+    }
+  ]
+}

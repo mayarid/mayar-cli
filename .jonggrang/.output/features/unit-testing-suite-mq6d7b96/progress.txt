@@ -1,0 +1,120 @@
+# Jonggrang Progress Log — cli
+# Created: 2026-06-09
+
+## task-001 — Infrastructure setup (test/ dir, scripts, helpers)
+- Added test/helpers.js (CommonJS, matches src/ style; zero deps, node: builtins only):
+  captureOutput() (patches stdout/stderr write + console.log/error, getters + restore()),
+  tempConfigHome() (mkdtempSync under os.tmpdir, sets XDG_CONFIG_HOME, cleanup restores env + rm -rf),
+  startServer() (http on port 0 / 127.0.0.1, returns {url,port,server,close}, default 200 "{}").
+- Added npm scripts: "test": "node --test", "test:coverage": "node --test --experimental-test-coverage".
+- GOTCHA: `node --test` runs EVERY file under test/, including helpers.js, counting it as 1
+  passing no-op "test". Harmless (helpers only define fns), but future helpers must stay side-effect-free.
+  Exit code is 0 with no real tests yet — acceptance met.
+- tempConfigHome MUST be called BEFORE require('../src/config') — config.js computes its path at load time.
+
+## task-002 — Export parseFlags from src/cli.js
+- Changed `module.exports = { run };` → `module.exports = { run, parseFlags };` (one-line additive).
+- ensureKey/interactive/process.exit/stdin paths left private and untouched — only parseFlags surfaced.
+- Verified: require('../src/cli').parseFlags is a function; parseFlags(['list','--json','--page','2'])
+  returns {flags:{json:true,page:"2"},positional:["list"]}. `node --test` still 0 fail.
+
+## task-003 — Util tests (checkResp, readData, maybeJson)
+- Added test/util.test.js: 19 tests, describe/test blocks, node:assert/strict. Full suite now 20.
+- IMPORTANT: task description mis-described readData/maybeJson (claimed JSON-parse/raw-fallback
+  semantics). Tested ACTUAL src/util.js behavior instead:
+  * checkResp(res): 2xx → returns undefined; else throws Error w/ .status + .body. Message =
+    `API ${status} — ${msg}`, msg = body.messages || body.message || res.raw || ''. Boundary
+    cases covered (199 throws, 200/299 pass, 300 throws).
+  * readData(value): falsy → undefined; '@'-prefix → fs.readFileSync + JSON.parse; else JSON.parse.
+    @file branch tested with a REAL temp file (mkdtemp/writeFile/rm in finally) — mock-free.
+  * maybeJson(flags, body, fallback): flags.json → ui.jsonOut(body) (writes JSON+\n to stdout),
+    return true; else fn fallback → call+true; else false. Non-function fallback → false.
+- maybeJson writes to stdout via ui.jsonOut; captured (not stubbed) with helpers.captureOutput()
+  to both assert output and keep test logs clean. cap.restore() in finally.
+- The skill 'library/testing/unit-testing-patterns' has NO SKILL.md on disk — followed existing
+  helpers.js conventions instead.
+
+## task-004 — CLI parse tests (parseFlags)
+- Added test/cli.test.js: 20 tests across 6 describe blocks; full suite now 43. parseFlags is
+  pure (no I/O, no process.exit), so each case is a direct call + deepEqual on {flags, positional}.
+  No helpers needed.
+- IMPORTANT: task desc said "short flags (-f value)" but src/cli.js has NO generic short-flag
+  handling. Only short flags are -h/-v (booleans). An unknown short token like '-f' doesn't start
+  with '--', so it falls through to the positional branch — '-f' AND its 'value' both become
+  positionals. Tested ACTUAL behavior (covered -h/-v booleans + the -f fall-through case).
+- Covered each documented style: --flag value (apiKey/page/pageSize/page-size alias/data + unknown
+  long flag consuming next token), --key=value (incl. '=' in value, empty value), boolean (--json
+  /--force), short (-h/-v), positionals (incl. '--' terminator pushing remainder verbatim), and
+  mixed-order combos (incl. last-wins overwrite, missing trailing value → undefined).
+
+## task-005 — Config round-trip tests (temp XDG_CONFIG_HOME)
+- Added test/config.test.js: 12 tests across 3 describe blocks; full suite now 55.
+- CRITICAL gotcha: src/config.js freezes BOTH paths at module load:
+  * XDG path from XDG_CONFIG_HOME (line 5) — isolated via helpers.tempConfigHome().
+  * legacy path from os.homedir() i.e. $HOME (line 9) — NOT covered by tempConfigHome.
+    To safely test the legacy ~/.mayar migration without touching the real home,
+    ALSO set process.env.HOME to a second temp dir BEFORE require('../src/config').
+    (os.homedir() honors $HOME on POSIX.) Restore/rm both in an after() hook.
+- Covered: path-location sanity (file/dir under temp XDG), load null when empty,
+  save→load round-trip, on-disk persistence, overwrite, pretty 2-space JSON,
+  clear→true+removes / clear→false when absent, malformed JSON → load() null,
+  legacy migration (copies to XDG, removes legacyFile+legacyDir, returns data),
+  XDG-precedence (no migration when XDG file exists), null when neither exists.
+- node --test spawns a separate child process per test file, so the global
+  HOME/XDG env mutation in config.test.js does not leak into other test files.
+- Verified post-run: no /root/.config/mayar and no /root/.mayar created.
+
+## task-006 — UI tests (table() + color wrappers, non-TTY)
+- Added test/ui.test.js: 15 tests across 4 describe blocks; full suite now 70, 0 fail.
+- KEY: src/ui.js freezes `isTTY = !!process.stdout.isTTY` at MODULE LOAD (line 3), so
+  behavior is fixed the instant you require('../src/ui'). node --test runs non-TTY
+  (process.stdout.isTTY === undefined) → wrappers return String(s) plain, no ANSI.
+- Robustness: gate the non-TTY assertions with `const skip = NON_TTY ? false : 'msg'`
+  passed as node:test's per-test `{ skip }` option, so the suite stays green even if
+  ever run under a TTY. captureOutput() patches .write, NOT .isTTY, so the frozen
+  value (and thus plain output) is unaffected by capturing.
+- Color wrappers (dim/bold/red/green/yellow/cyan/magenta) coerce via String(): red(42)
+  ==='42', dim(null)==='null', etc. Asserted no /\x1b\[/ in any output.
+- table() layout math (verified exactly): width = min(48, max(colNameLen, ...cellLens));
+  columns joined with a 2-space gutter; cells padEnd(width). Empty/null/undefined rows
+  → dim('(no rows)')+'\n' (plain in non-TTY). Cells use `r[col] ?? ''` so 0 is kept
+  but null/undefined/missing → ''. Values longer than width → slice(0,width-1)+'…';
+  width cap 48 means a 50-char value renders as 47×'x'+'…' (48 display chars).
+
+## task-007 — Wire-up pre-commit hook + document coverage reality
+- pre_commit hook (.jonggrang/jonggrang.json) changed from "echo 'no test command
+  configured'" → "node --test". The full suite (70 tests, 0 fail) now gates every commit.
+  Used bare `node --test` (not `npm test`) to match the task spec and avoid an npm subshell;
+  it picks up every test/*.test.js the same way the "test" npm script does.
+- NOTE: both files this task touches live under .jonggrang/ (jonggrang state), which is
+  intentionally kept OUT of the feature branch (recent commits only carry test/ + src/cli.js).
+  So this task produces NO git commit — the changes are state-only and stay in the working tree.
+
+### Coverage reality (the 80% threshold gap)
+- testing.coverage_threshold in jonggrang.json is 80, and this first pass DOES NOT meet it.
+  This is intentional, not a miss. The suite deliberately scopes to pure / near-pure functions
+  that need no mocking: util.* (checkResp/readData/maybeJson), cli.parseFlags, config round-trip
+  (temp XDG_CONFIG_HOME + HOME), and ui.table()/color wrappers (non-TTY). These are the parts
+  that can be tested mock-free with high signal and zero flakiness.
+- UNCOVERED by design: src/commands/* (each command wires api + ui together), the interactive /
+  process.exit paths (ensureKey, ui.ask, ui.askSecret), the HTTP layer in src/api.js, and the
+  top-level run() dispatch in src/cli.js. Covering these honestly requires either dependency
+  seams the CommonJS code doesn't have yet, or a live transport — both deferred (see below).
+- Decision rationale: forcing 80% now would mean brittle require.cache surgery / monkey-patching
+  to fake api + ui, producing tests that assert "the mock was called" rather than real behavior —
+  false confidence + a large maintenance surface. We chose honest, durable coverage over a
+  green threshold number. The threshold stays at 80 as the documented target for the next layers.
+
+### Follow-up layers (to close the gap, in rough ROI order)
+1. Command-level tests with mocking: introduce a dependency seam (e.g. export commands as
+   factories taking {api, ui}, or a small injectable module registry) so src/commands/* can run
+   against fake api/ui. This is the biggest coverage lever; it needs a (behavior-preserving)
+   refactor for DI, so it was kept out of this pass's files array.
+2. Local HTTP integration tests: use test/helpers.js startServer() (already built — http on
+   port 0, returns {url,port,close}) with MAYAR_API_URL/BASE_URL pointed at it (set BEFORE
+   require, since api.js freezes BASE_URL at load) to exercise checkResp + the real fetch path
+   end-to-end without external network. Slower/flakier than unit tests, so a second layer, not
+   the foundation.
+3. Interactive-path coverage: ensureKey / ui.ask / ui.askSecret call process.exit and drive raw
+   stdin; testing them needs either extraction of the testable core or a child-process harness
+   that feeds stdin and asserts exit codes. Lowest ROI, do last.
