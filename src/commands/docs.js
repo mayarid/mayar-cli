@@ -250,7 +250,7 @@ function similarityScore(input, title) {
 // ---------------------------------------------------------------------------
 async function run(ctx) {
   const { flags, positional } = ctx;
-  const topic = positional[0] || null;
+  const topic = positional.length > 0 ? positional.join(' ') : null;
   const refresh = flags.refresh || false;
   const json = flags.json || false;
   const sectionFilter = flags.section || flags.category || null;
@@ -466,24 +466,57 @@ async function run(ctx) {
       const totalMatches = matches.length;
       let displayMatches = matches;
 
-      if (limit && matches.length > limit) {
-        displayMatches = matches.slice(0, limit);
-        process.stdout.write(
-          `Showing top ${limit} of ${totalMatches} topics matching "${topic}" ${ui.dim('(use --all to see all)')}:` + '\n\n',
-        );
-      } else {
-        process.stdout.write(
-          `${totalMatches} topics match "${topic}":` + '\n\n',
-        );
-      }
+      if (process.stdout.isTTY) {
+        if (limit && matches.length > limit) {
+          displayMatches = matches.slice(0, limit);
+          process.stdout.write(
+            `Showing top ${limit} of ${totalMatches} topics matching "${topic}" ${ui.dim('(use --all to see all)')}:` + '\n\n',
+          );
+        } else {
+          process.stdout.write(
+            `${totalMatches} topics match "${topic}":` + '\n\n',
+          );
+        }
 
-      for (let i = 0; i < displayMatches.length; i++) {
-        const m = displayMatches[i];
-        process.stdout.write(
-          `  ${i + 1}. ${m.title} ${ui.dim('(' + m.section + ')')}` + '\n',
-        );
-        if (m.description) {
-          process.stdout.write(`     ${ui.dim(m.description)}` + '\n');
+        const selected = await ui.pickFromList(displayMatches, {
+          displayKey: 'title',
+          descriptionKey: 'description',
+        });
+
+        if (selected) {
+          process.stdout.write('\n');
+          process.stdout.write(
+            `${ui.bold(selected.title)} — ${ui.cyan(selected.url)}` + '\n',
+          );
+          try {
+            const html = await fetchPageContent(selected.url);
+            const rendered = renderContent(html);
+            process.stdout.write(rendered + '\n');
+          } catch (_err) {
+            process.stdout.write(ui.dim('(could not fetch page content)') + '\n');
+          }
+          process.stdout.write(ui.dim('───') + '\n');
+        }
+      } else {
+        if (limit && matches.length > limit) {
+          displayMatches = matches.slice(0, limit);
+          process.stdout.write(
+            `Showing top ${limit} of ${totalMatches} topics matching "${topic}" ${ui.dim('(use --all to see all)')}:` + '\n\n',
+          );
+        } else {
+          process.stdout.write(
+            `${totalMatches} topics match "${topic}":` + '\n\n',
+          );
+        }
+
+        for (let i = 0; i < displayMatches.length; i++) {
+          const m = displayMatches[i];
+          process.stdout.write(
+            `  ${i + 1}. ${m.title} ${ui.dim('(' + m.section + ')')}` + '\n',
+          );
+          if (m.description) {
+            process.stdout.write(`     ${ui.dim(m.description)}` + '\n');
+          }
         }
       }
     }

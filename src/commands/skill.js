@@ -53,7 +53,7 @@ function generateCursorMdc(skillContent) {
 
   const frontmatter = `---
 alwaysApply: true
-description: Mayar CLI — interact with the Mayar payment platform (invoices, products, payments, customers, transactions, webhooks, QR codes, memberships, credit wallets, discounts, installments, bundling, SaaS/software licensing).
+description: Mayar API & CLI integration skill. For App Integration, use \`mayar docs <topic>\` to read REST API specs and write native HTTP (fetch/axios) in app code. For Direct Shell Tasks & Admin Operations, execute Mayar CLI commands directly (\`mayar balance\`, \`mayar invoice list\`, etc.).
 globs:
   - "**/*"
 ---

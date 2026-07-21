@@ -3,10 +3,9 @@ name: mayar
 display_name: Mayar CLI
 version: "1.2.0"
 description: >
-  Interact with the Mayar payment platform (invoices, products, payment links,
-  single payments, customers, transactions, webhooks, QR codes, memberships,
-  credit wallets, discounts, installments, bundling, SaaS/software licensing,
-  documentation, and agent skill management) from any AI agent or shell.
+  Mayar API & CLI integration skill.
+  - APP INTEGRATION: Use `mayar docs <topic>` to read REST API specs (endpoints, schemas), then write native HTTP requests (fetch/axios) in user app code. Do NOT run CLI inside backend scripts.
+  - DIRECT SHELL / ADMIN TASKS: Use Mayar CLI commands directly (`mayar invoice list`, `mayar balance`, `mayar product create`, `mayar status`, etc.) for direct operational and testing tasks in terminal.
   Targets Mayar API v2. Node.js 18+.
 author: Mayar bot
 license: MIT
@@ -75,6 +74,15 @@ capabilities:
 
 This document describes how AI agents (Claude Code, OpenClaw, Codex, Cursor, and others)
 should install, authenticate, select environments, search docs, and execute commands using the `mayar` CLI tool.
+
+## AI Agent Usage Guidelines & Decision Matrix
+
+AI agents MUST distinguish between **coding application integrations** vs **direct shell administration & testing**:
+
+| User Intent / Task | Correct Action | Recommended Tool / Command |
+| --- | --- | --- |
+| **A. Implementing Mayar API in Application Code** (e.g. Node.js, Express, Next.js, FastAPI, Laravel) | 1. Read API specs & schemas via `mayar docs`<br>2. Write native HTTP requests (`fetch`, `axios`) in app source code.<br>*(Do NOT wrap CLI commands in backend handlers)* | `npx -y mayar@latest docs <topic> [--json]` |
+| **B. Direct Shell Operations & Administrative Tasks** (e.g. check balance, list invoices, create test product, register webhook) | Execute Mayar CLI commands directly in terminal for fast, convenient administration & testing | `npx -y mayar@latest balance`<br>`npx -y mayar@latest invoice list`<br>`npx -y mayar@latest product create`<br>`npx -y mayar@latest status` |
 
 ## Quick start for agents
 
@@ -358,15 +366,14 @@ npx -y mayar@latest docs payment --json --compact --limit 3
 ## Agent Decision Tree
 
 ```
-START
-  └─ run: npx -y mayar@latest whoami --json
-        ├─ exit 0 + valid=true  →  proceed with task
-        └─ exit non-zero or valid=false
-              └─ ask user:
-                    "Please provide your Mayar API key or choose setup:
-                     (A) npx -y mayar@latest api-key <KEY>
-                     (B) set MAYAR_API_KEY environment variable
-                     (C) npx -y mayar@latest login
-                     (D) npx -y mayar@latest init
-                     Get your key at https://web.mayar.id → Integration → API Key"
+START: Determine User Intent
+  │
+  ├─► TASK A: Writing Application Code (Backend / Frontend / Script)
+  │     ├─ 1. Run: npx -y mayar@latest docs <topic> [--json]
+  │     └─ 2. Write native HTTP requests (fetch/axios) in user app source files
+  │
+  └─► TASK B: Direct Shell Administration, Testing, & Operations
+        ├─ 1. Check Auth: npx -y mayar@latest whoami --json
+        │     ├─ valid=true  →  Execute CLI command directly (e.g. mayar balance, mayar invoice list)
+        │     └─ valid=false →  Prompt user for API Key or run: mayar api-key <KEY> / mayar login / MAYAR_API_KEY
 ```

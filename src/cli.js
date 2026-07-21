@@ -203,6 +203,7 @@ async function ensureKey(flags) {
   if (process.env.MAYAR_API_KEY) return process.env.MAYAR_API_KEY;
   const cfg = config.load();
   if (cfg && cfg.apiKey) return cfg.apiKey;
+  if (cfg && cfg.auth && cfg.auth.authToken) return cfg.auth.authToken;
   ui.printBanner();
   const endpoint = await ui.selectEnvironment(flags);
   const webUrl = endpoint === 'sandbox' ? 'https://web.mayar.club' : 'https://web.mayar.id';
