@@ -1,0 +1,96 @@
+
+## task-001 — Lock endpoint contract (done)
+- Added a fixed-contract comment block near USAGE in src/commands/membership.js
+  listing the 4 Headless v2 wrapper endpoints (product create/get, tier create/get)
+  with exact paths + bodies verbatim from the clarification.
+- Dispatch collision check: existing switch cases are members, tiers (plural = tier
+  LIST), register, get/detail, update, cancel, create-invoice/createinvoice/invoice.
+  New singular `product` and `tier` keys do NOT collide. Watch the tiers-vs-tier
+  distinction when adding the tier sub-namespace in a later task.
+- There is NO bare `create` case in the switch — creates are per-resource
+  (register, create-invoice). Product/tier creates will follow the register pattern:
+  readData(flags.data) -> POST .../create -> checkResp -> ui.jsonOut.
+- Comment-only change; validated with `node -c` (syntax OK) and module load (exports unchanged).
+
+## task-002 — Add membership product create/get sub-namespace (done)
+- Added a `product` switch case in src/commands/membership.js run() that nests a
+  second switch on rest[0] (action): `create` and `get`.
+  - create: readData(flags.data) -> POST /hl/v2/memberships/products/create -> checkResp -> ui.jsonOut
+  - get: productId = rest[1] -> GET /hl/v2/memberships/products/:productId -> checkResp -> ui.jsonOut
+  - unknown action throws 'Usage: mayar membership product <create|get>'
+- Nested-switch shape (not flat cases) keeps product/tier sub-namespaces self-contained
+  and mirrors the plan's `membership product <create|get>` grammar. The tier case in the
+  next task should follow the same nested pattern (tier get also needs --productId).
+- Updated top USAGE constant to include product|tier.
+- Positional layout: rest[0]=action, rest[1]=id. Note this DIFFERS from the flat member
+  cases where rest[0] is the id — because product/tier add an extra sub-namespace level.
+- Validated: node -c (syntax), module load (exports unchanged = {run}), and a direct
+  run() harness confirming all four usage/error paths throw before any network call.
+- Lint/test are placeholder echoes (no real suite), so validation = syntax + error-path smoke.
+
+## task-003 — Add membership tier create/get sub-namespace (done)
+- Added a singular `tier` switch case in src/commands/membership.js run(), nested
+  switch on rest[0] mirroring the product case exactly:
+  - create: readData(flags.data) -> POST /hl/v2/memberships/tiers/create -> checkResp -> ui.jsonOut
+  - get: tierId = rest[1] -> requires --productId -> GET /hl/v2/memberships/tiers/:tierId
+    with query {productId} (mirrors the plural tier-list productId scoping) -> checkResp -> ui.jsonOut
+  - unknown action throws 'Usage: mayar membership tier <create|get>'
+- Plural `tiers` (LIST) case left completely untouched — verified still GETs
+  /hl/v2/memberships/tiers. USAGE constant already included product|tier from task-002.
+- Positional layout consistent with product: rest[0]=action, rest[1]=id. Note tier get
+  needs --productId (query scope) whereas product get does NOT — the only shape diff
+  between the two sub-namespaces.
+- Validated: node -c (syntax), module load (exports still {run}), and a stubbed-network
+  smoke harness asserting all 4 error paths throw, create POSTs to tiers/create with the
+  parsed body, get GETs the encoded tierId path with the productId query, and plural tiers
+  still lists. All green. Lint/test are placeholder echoes (no real suite).
+
+## task-004 — Update CLI help, README, SKILL docs (done)
+- Added the four new commands (product create/get, tier create/get) to three
+  surfaces, each in its own local style:
+  - src/cli.js Memberships block: bare grammar lines appended after create-invoice.
+  - README.md Memberships list: column-aligned --flag annotations (product get has
+    no flags; tier get shows --productId <id>).
+  - SKILL.md Memberships block: `npx -y mayar@latest membership ...` form, --data
+    quoted as '<json|@file>' matching the surrounding register example.
+- Required-flag accuracy per acceptance: --data on both creates, --productId on
+  tier get only (product get takes just <productId>).
+- Docs-only change. Validated src/cli.js with `node -c` (help text is a template
+  literal, so syntax matters). README/SKILL are plain markdown. Test cmd is a
+  placeholder echo, no real suite.
+
+## task-005 — Add tests for membership product/tier sub-command routing (done)
+- Added two describe blocks to test/cli.test.js covering the 7 usage/error
+  paths of the new product/tier sub-namespaces (product create no --data,
+  product get no id, unknown product action; tier create no --data, tier get
+  no id, tier get id-but-no-productId, unknown tier action).
+- Key insight: every one of these paths throws BEFORE api.request, so tests
+  need no live API / no network stub. Just call membership.run() and assert on
+  the rejected promise's message. run() is async → thrown Error surfaces as a
+  rejection; used assert.rejects with a validator fn (assert.equal on message)
+  because the messages contain regex-special chars |()<> so exact-equality beats
+  a RegExp matcher.
+- Positional layout for these cases: rest[0]=action, rest[1]=id (differs from
+  the flat member cases where rest[0] is the id). Tests pass positional arrays
+  mirroring parseFlags output, e.g. ['tier','get','tier-123'].
+- readData(undefined) returns undefined (falsy guard), so a missing --data on
+  create throws the required-data error before any POST — verified in util.js.
+- Validation: `node --test` and `npm test` both green — 77 tests (7 new), 0 fail.
+  No tsc/lint configured beyond node --test.
+
+## Phase 14 — testing: happy-path dispatch tests (done)
+- Closed the P0 gap from TEST-PLAN.md: the routing tests all throw before
+  api.request, so which method/path/body/query each sub-command sends was
+  untested (and the 4 paths are a FIXED endpoint contract).
+- Added 4 happy-path dispatch tests to test/cli.test.js:
+  product create (POST products/create, body==parsed --data, apiKey fwd),
+  product get (GET encoded id, no query), tier create (POST tiers/create),
+  tier get (GET encoded id + query {productId}).
+- Mock: replace api.request PROPERTY on the shared require('../api') object —
+  membership.js calls api.request(...) by property at call time, so no DI/network
+  needed. Stub records {method,pathname,opts}, returns {status:200,...} so
+  checkResp passes. Restore in finally. Also suppressed process.stdout.write so
+  ui.jsonOut doesn't pollute test output (verified no leak).
+- encodeURIComponent coverage folded into get cases via special-char ids
+  ('a b/c' -> a%20b%2Fc, 't/1' -> t%2F1).
+- Validation: `node --test` green — 81 tests (4 new), 0 fail. No network hit.
