@@ -165,6 +165,28 @@ async function run({ apiKey, flags, positional }) {
           throw new Error('Usage: mayar membership product <create|get>');
       }
     }
+    case 'tier': {
+      const action = rest[0];
+      switch (action) {
+        case 'create': {
+          const body = readData(flags.data);
+          if (!body) throw new Error('mayar membership tier create requires --data <json|@file>');
+          const res = await api.request('POST', '/hl/v2/memberships/tiers/create', { apiKey, body });
+          checkResp(res); ui.jsonOut(res.body); return;
+        }
+        case 'get': {
+          const tierId = rest[1];
+          if (!tierId) throw new Error('Usage: mayar membership tier get <tierId> --productId <id>');
+          if (!flags.productId) throw new Error('mayar membership tier get requires --productId <id>');
+          const res = await api.request('GET', `/hl/v2/memberships/tiers/${encodeURIComponent(tierId)}`, {
+            apiKey, query: { productId: flags.productId },
+          });
+          checkResp(res); ui.jsonOut(res.body); return;
+        }
+        default:
+          throw new Error('Usage: mayar membership tier <create|get>');
+      }
+    }
     default:
       throw new Error(USAGE);
   }
