@@ -11,6 +11,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { parseFlags } = require('../src/cli');
+const membership = require('../src/commands/membership');
 
 describe('parseFlags — long flags with a value (--flag value)', () => {
   test('--api-key consumes the following argument', () => {
@@ -183,5 +184,85 @@ describe('parseFlags — mixed-order combinations', () => {
       flags: { page: '9' },
       positional: [],
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// membership product/tier sub-command routing.
+//
+// The new `membership product <create|get>` and `membership tier <create|get>`
+// sub-namespaces validate their inputs BEFORE any api.request call — every case
+// below throws synchronously on a missing --data body, missing positional id,
+// missing --productId, or an unknown sub-action. So these assertions never hit
+// the network: run() rejects on the usage/error path first. We assert on the
+// exact Error message. apiKey is a dummy — it is never read on these paths.
+//
+// run() is async, so a thrown Error surfaces as a rejected promise; the
+// validator form of assert.rejects lets us pin the message exactly (the strings
+// contain regex-special |()<> so an equality check beats a RegExp).
+
+// Invoke membership.run() with the given positional/flags and assert it rejects
+// with exactly `message`. Positional mirrors parseFlags output: for these
+// sub-namespaces rest[0] is the action and rest[1] is the id.
+async function rejectsWith(positional, flags, message) {
+  await assert.rejects(
+    membership.run({ apiKey: 'test-key', flags, positional }),
+    (err) => {
+      assert.equal(err.message, message);
+      return true;
+    },
+  );
+}
+
+describe('membership product sub-command routing', () => {
+  test('product create with no --data throws the required-data error', async () => {
+    await rejectsWith(
+      ['product', 'create'], {},
+      'mayar membership product create requires --data <json|@file>',
+    );
+  });
+
+  test('product get with no id throws the usage error', async () => {
+    await rejectsWith(
+      ['product', 'get'], {},
+      'Usage: mayar membership product get <productId>',
+    );
+  });
+
+  test('an unknown product sub-action throws the <create|get> usage error', async () => {
+    await rejectsWith(
+      ['product', 'frobnicate'], {},
+      'Usage: mayar membership product <create|get>',
+    );
+  });
+});
+
+describe('membership tier sub-command routing', () => {
+  test('tier create with no --data throws the required-data error', async () => {
+    await rejectsWith(
+      ['tier', 'create'], {},
+      'mayar membership tier create requires --data <json|@file>',
+    );
+  });
+
+  test('tier get with no id throws the usage error', async () => {
+    await rejectsWith(
+      ['tier', 'get'], {},
+      'Usage: mayar membership tier get <tierId> --productId <id>',
+    );
+  });
+
+  test('tier get with an id but no --productId throws the productId error', async () => {
+    await rejectsWith(
+      ['tier', 'get', 'tier-123'], {},
+      'mayar membership tier get requires --productId <id>',
+    );
+  });
+
+  test('an unknown tier sub-action throws the <create|get> usage error', async () => {
+    await rejectsWith(
+      ['tier', 'frobnicate'], {},
+      'Usage: mayar membership tier <create|get>',
+    );
   });
 });
