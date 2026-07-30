@@ -2,7 +2,7 @@ const api = require('../api');
 const ui = require('../ui');
 const { checkResp, readData, pagination, cursorFooter } = require('../util');
 
-const USAGE = 'Usage: mayar membership <members|tiers|register|get|update|cancel|create-invoice>';
+const USAGE = 'Usage: mayar membership <members|tiers|product|tier|register|get|update|cancel|create-invoice>';
 
 /*
  * ENDPOINT CONTRACT — membership product & tier write/get (Headless v2 wrappers)
@@ -145,6 +145,25 @@ async function run({ apiKey, flags, positional }) {
         apiKey, body: { productId: flags.productId },
       });
       checkResp(res); ui.jsonOut(res.body); return;
+    }
+    case 'product': {
+      const action = rest[0];
+      switch (action) {
+        case 'create': {
+          const body = readData(flags.data);
+          if (!body) throw new Error('mayar membership product create requires --data <json|@file>');
+          const res = await api.request('POST', '/hl/v2/memberships/products/create', { apiKey, body });
+          checkResp(res); ui.jsonOut(res.body); return;
+        }
+        case 'get': {
+          const productId = rest[1];
+          if (!productId) throw new Error('Usage: mayar membership product get <productId>');
+          const res = await api.request('GET', `/hl/v2/memberships/products/${encodeURIComponent(productId)}`, { apiKey });
+          checkResp(res); ui.jsonOut(res.body); return;
+        }
+        default:
+          throw new Error('Usage: mayar membership product <create|get>');
+      }
     }
     default:
       throw new Error(USAGE);
