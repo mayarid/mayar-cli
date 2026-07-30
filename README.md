@@ -172,6 +172,10 @@ Memberships
   membership update <memberId>         --productId <id> [--data <json|@file>]
   membership cancel <memberId>         --productId <id>
   membership create-invoice <memberId> --productId <id>
+  membership product create            --data <json|@file>
+  membership product get <productId>
+  membership tier create               --data <json|@file>
+  membership tier get <tierId>         --productId <id>
 
 Credit wallets
   credit balance  --customerId <id> --productId <id> [--tierId <id>]

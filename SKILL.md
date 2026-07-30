@@ -309,6 +309,10 @@ npx -y mayar@latest webhook retry <historyId>
 npx -y mayar@latest membership members --productId <id>
 npx -y mayar@latest membership tiers --productId <id>
 npx -y mayar@latest membership register --data '<json|@file>'
+npx -y mayar@latest membership product create --data '<json|@file>'
+npx -y mayar@latest membership product get <productId>
+npx -y mayar@latest membership tier create --data '<json|@file>'
+npx -y mayar@latest membership tier get <tierId> --productId <id>
 
 # SaaS & Software Licensing
 npx -y mayar@latest saas activate <licenseCode> <productId>
