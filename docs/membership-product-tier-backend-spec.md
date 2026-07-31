@@ -37,7 +37,7 @@ Bikin membership product baru.
   "hidePortalAccessInEmails": false,      // opsional (bool)
   "membershipInfo": {                     // wajib (object)
     "showMembers": true,                  // wajib (bool)
-    "type": "string",                     // wajib (enum tipe membership)
+    "type": "MEMBERSHIP",                 // wajib, enum: MEMBERSHIP | SAAS | CREDIT
     "creditValue": 0,                     // opsional
     "enableCreditTopup": false,           // opsional
     "isAccumulateCredit": false,          // opsional
@@ -141,7 +141,7 @@ export MAYAR_API_KEY=xxxxx
 export MAYAR_API_URL=https://<host-backend>
 
 node bin/mayar.js membership product create \
-  --data '{"name":"Pro","description":"Paket pro","membershipInfo":{"showMembers":true,"type":"finite"}}'
+  --data '{"name":"Pro","description":"Paket pro","membershipInfo":{"showMembers":true,"type":"MEMBERSHIP"}}'
 
 node bin/mayar.js membership product get <productId>
 

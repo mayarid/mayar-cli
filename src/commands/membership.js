@@ -23,7 +23,7 @@ const USAGE = 'Usage: mayar membership <members|tiers|product|tier|register|get|
  *       hidePortalAccessInEmails?,
  *       membershipInfo: {
  *         showMembers,
- *         type,
+ *         type,            // enum: MEMBERSHIP | SAAS | CREDIT (uppercase)
  *         creditValue?,
  *         enableCreditTopup?,
  *         isAccumulateCredit?,
