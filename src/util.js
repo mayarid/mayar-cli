@@ -1,10 +1,25 @@
 const fs = require('fs');
 const ui = require('./ui');
 
+// Pull the field-level part of an error response out of the envelope. Mayar
+// puts the human summary in `messages`/`message` ("Validation Error") and the
+// useful bit — which field failed — in one of these siblings.
+function errorDetail(body, summary) {
+  if (!body || typeof body !== 'object') return '';
+  const detail = body.errors ?? body.error ?? body.details ?? body.validation ?? body.data;
+  if (detail === undefined || detail === null) return '';
+  if (typeof detail === 'string') return detail === summary ? '' : detail;
+  try {
+    const json = JSON.stringify(detail);
+    return json === '{}' || json === '[]' ? '' : json;
+  } catch (_) { return ''; }
+}
+
 function checkResp(res) {
   if (res.status >= 200 && res.status < 300) return;
   const msg = (res.body && (res.body.messages || res.body.message)) || res.raw || '';
-  const err = new Error(`API ${res.status} — ${msg}`);
+  const detail = process.env.MAYAR_DEBUG ? res.raw : errorDetail(res.body, msg);
+  const err = new Error(`API ${res.status} — ${msg}` + (detail ? `\n  ${detail}` : ''));
   err.status = res.status;
   err.body = res.body;
   throw err;
