@@ -1,7 +1,7 @@
 {
   "name": "mayar",
-  "version": "1.1.1",
-  "description": "Zero-dependency Node.js CLI for the Mayar API (production endpoint).",
+  "version": "1.1.2",
+  "description": "Node.js CLI for the Mayar API (production endpoint).",
   "bin": {
     "mayar": "bin/mayar.js"
   },
@@ -17,9 +17,6 @@
   "dependencies": {
     "@mayaross/auth": "^1.0.0"
   },
-  "bundleDependencies": [
-    "@mayaross/auth"
-  ],
   "keywords": [
     "mayar",
     "mayar-api",
