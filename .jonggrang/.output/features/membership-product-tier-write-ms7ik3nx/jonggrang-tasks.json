@@ -1,0 +1,99 @@
+{
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Lock endpoint contract for membership product & tier write/get commands",
+      "description": "Record the four Headless v2 wrapper endpoints as the fixed build contract inside a code comment block at the top of src/commands/membership.js (near the existing USAGE constant), so subsequent tasks implement against exact paths/bodies. Contract: (1) POST /hl/v2/memberships/products/create with body {name, description, redirectUrl?, coverImage?, hidePortalAccessInEmails?, membershipInfo:{showMembers, type, creditValue?, enableCreditTopup?, isAccumulateCredit?, isAccumulateTopupCredit?, minCreditTopup?, maxCreditTopup?}}; (2) GET /hl/v2/memberships/products/:productId; (3) POST /hl/v2/memberships/tiers/create with body {productId, name, description, notes?, limit?, upfrontFee?, finishMembershipAt?, gracePeriodInDays?, trialPeriodInDays?, trialCredit?, isTrialAvailable?, redirectUrl?, periods:[{monthPeriod?, amount?, credit?, isLifetime?, status?}]}; (4) GET /hl/v2/memberships/tiers/:tierId?productId=... Acceptance: comment block present listing all four endpoints+bodies verbatim from the clarification; verify the new singular sub-namespaces membership product / membership tier do NOT collide with existing switch cases (members, tiers, register, get/detail, update, cancel, create-invoice) — document that product and tier are new dispatch keys. No behavior change yet; existing commands untouched.",
+      "priority": 1,
+      "status": "completed",
+      "feature_id": "membership-product-tier-write-ms7ik3nx",
+      "skill": null,
+      "blocked_by": [],
+      "passes": true,
+      "files": [
+        "src/commands/membership.js"
+      ],
+      "started_at": "2026-07-30T12:54:28.658Z",
+      "completed_at": "2026-07-30T12:55:02.261Z",
+      "error_log": []
+    },
+    {
+      "id": "task-002",
+      "title": "Add membership product create/get sub-namespace in membership.js",
+      "description": "Add a new `product` case to the switch in src/commands/membership.js run() that dispatches on rest[0] (the second positional) to create|get. Implement: (a) `membership product create --data <json|@file>` -> const body = readData(flags.data); if (!body) throw new Error(mayar membership product create requires --data <json|@file>); POST /hl/v2/memberships/products/create with {apiKey, body}; checkResp(res); ui.jsonOut(res.body). (b) `membership product get <productId>` -> productId = rest[1]; if (!productId) throw new Error(Usage: mayar membership product get <productId>); GET /hl/v2/memberships/products/${encodeURIComponent(productId)} with {apiKey}; checkResp(res); ui.jsonOut(res.body). Unknown product sub-action throws a usage error Usage: mayar membership product <create|get>. Follow the exact pattern of the existing register/get/create-invoice cases (require helpers already imported: api, ui, checkResp, readData). Update the top USAGE constant to include product|tier. Acceptance: `membership product create` posts to the create endpoint; `membership product get <id>` GETs the product detail endpoint; missing --data / missing id produce clear errors; does not disturb existing member `get` case (member get stays as `membership get <memberId>`).",
+      "priority": 2,
+      "status": "completed",
+      "feature_id": "membership-product-tier-write-ms7ik3nx",
+      "skill": null,
+      "blocked_by": [
+        "task-001"
+      ],
+      "passes": true,
+      "files": [
+        "src/commands/membership.js"
+      ],
+      "started_at": "2026-07-30T12:55:37.380Z",
+      "completed_at": "2026-07-30T12:56:22.349Z",
+      "error_log": []
+    },
+    {
+      "id": "task-003",
+      "title": "Add membership tier create/get sub-namespace in membership.js",
+      "description": "Add a new `tier` (singular) case to the switch in src/commands/membership.js run() that dispatches on rest[0] to create|get, sitting alongside the existing plural `tiers` list case (do NOT modify `tiers`). Implement: (a) `membership tier create --data <json|@file>` -> const body = readData(flags.data); if (!body) throw new Error(mayar membership tier create requires --data <json|@file>); POST /hl/v2/memberships/tiers/create with {apiKey, body}; checkResp(res); ui.jsonOut(res.body). (b) `membership tier get <tierId> --productId <id>` -> tierId = rest[1]; if (!tierId) throw new Error(Usage: mayar membership tier get <tierId> --productId <id>); if (!flags.productId) throw new Error(mayar membership tier get requires --productId <id>); GET /hl/v2/memberships/tiers/${encodeURIComponent(tierId)} with {apiKey, query: {productId: flags.productId}}; checkResp(res); ui.jsonOut(res.body). Unknown tier sub-action throws Usage: mayar membership tier <create|get>. Mirror the tier-list productId scoping. Acceptance: `membership tier create` posts to tiers/create; `membership tier get <id> --productId <id>` GETs the tier detail endpoint with productId query; missing --data, missing id, or missing --productId produce clear errors; plural `membership tiers` list behavior unchanged.",
+      "priority": 3,
+      "status": "completed",
+      "feature_id": "membership-product-tier-write-ms7ik3nx",
+      "skill": null,
+      "blocked_by": [
+        "task-002"
+      ],
+      "passes": true,
+      "files": [
+        "src/commands/membership.js"
+      ],
+      "started_at": "2026-07-30T12:57:08.261Z",
+      "completed_at": "2026-07-30T12:57:54.985Z",
+      "error_log": []
+    },
+    {
+      "id": "task-004",
+      "title": "Update CLI help, README, and SKILL docs for new membership commands",
+      "description": "Document the four new commands consistently across three surfaces. (1) src/cli.js Memberships help section (around lines 101-108): add lines `membership product create --data <json|@file>`, `membership product get <productId>`, `membership tier create --data <json|@file>`, `membership tier get <tierId> --productId <id>` under the existing membership list. (2) README.md Memberships section (around lines 167-174): add the same four commands with flag annotations matching the existing style. (3) SKILL.md Memberships block (around lines 305-311): add the four commands in the `npx -y mayar@latest ...` form matching existing examples. Acceptance: all three docs list product create/get and tier create/get with correct required flags (--data for creates, --productId for tier get); wording/format matches surrounding entries; no other doc content altered.",
+      "priority": 4,
+      "status": "completed",
+      "feature_id": "membership-product-tier-write-ms7ik3nx",
+      "skill": null,
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "src/cli.js",
+        "README.md",
+        "SKILL.md"
+      ],
+      "started_at": "2026-07-30T12:58:20.269Z",
+      "completed_at": "2026-07-30T12:59:00.900Z",
+      "error_log": []
+    },
+    {
+      "id": "task-005",
+      "title": "Add tests for new membership sub-command routing and run validation",
+      "description": "Add coverage in test/cli.test.js for the new dispatch/usage behavior of membership product and tier commands. Cover: (a) `membership product create` with no --data throws the required-data error; (b) `membership product get` with no id throws the usage error; (c) `membership tier create` with no --data throws; (d) `membership tier get` with no id or no --productId throws its respective errors; (e) an unknown product/tier sub-action throws the `<create|get>` usage error. Use the existing test harness/patterns in test/cli.test.js (node:test describe/test; mock or invoke the membership run() as other command tests do — inspect existing helpers in test/helpers.js). Do not require a live API — assert on thrown Error messages only. Then run the project validation: `node --test` (test command), and confirm no lint/typecheck breakage (project stack node-typescript; there is no configured tsc/lint beyond node --test, so run `npm test`). Log learnings to .jonggrang/progress.txt. Acceptance: new tests pass under `node --test`; all pre-existing tests still pass; progress.txt updated with any discoveries.",
+      "priority": 5,
+      "status": "completed",
+      "feature_id": "membership-product-tier-write-ms7ik3nx",
+      "skill": null,
+      "blocked_by": [
+        "task-004"
+      ],
+      "passes": true,
+      "files": [
+        "test/cli.test.js"
+      ],
+      "started_at": "2026-07-30T12:59:47.240Z",
+      "completed_at": "2026-07-30T13:01:25.767Z",
+      "error_log": []
+    }
+  ]
+}

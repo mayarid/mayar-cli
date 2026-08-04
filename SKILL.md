@@ -304,12 +304,82 @@ npx -y mayar@latest webhook retry <historyId>
 
 ### Memberships & Licensing
 
-```bash
-# Memberships
-npx -y mayar@latest membership members --productId <id>
-npx -y mayar@latest membership tiers --productId <id>
-npx -y mayar@latest membership register --data '<json|@file>'
+Objects nest as **product → tier → period → member**, and must be created in that
+order — a tier needs `productId`, a member needs `membershipTierId`.
 
+```bash
+# Memberships — setup (write)
+npx -y mayar@latest membership product create --data '<json|@file>'
+npx -y mayar@latest membership tier create --data '<json|@file>'
+
+# Memberships — read
+npx -y mayar@latest membership product get <productId>
+npx -y mayar@latest membership tier get <tierId> --productId <id>   # --productId required
+npx -y mayar@latest membership tiers --productId <id>               # plural = list tiers
+npx -y mayar@latest membership members --productId <id>
+
+# Memberships — member lifecycle
+npx -y mayar@latest membership register --data '<json|@file>'
+npx -y mayar@latest membership get <memberId> --productId <id>
+npx -y mayar@latest membership update <memberId> --productId <id> --data '<json|@file>'
+npx -y mayar@latest membership create-invoice <memberId> --productId <id>
+npx -y mayar@latest membership cancel <memberId> --productId <id>
+```
+
+`membership product create` body — `name`, `description`, `membershipInfo` are required;
+`membershipInfo.type` is an **uppercase** enum (`MEMBERSHIP` | `SAAS` | `CREDIT`) and the
+credit fields only apply when it is `CREDIT`:
+
+```jsonc
+{
+  "name": "Kelas Premium",
+  "description": "Akses penuh",
+  "redirectUrl": "https://example.com/thanks",   // optional
+  "coverImage": "https://example.com/cover.png", // optional
+  "hidePortalAccessInEmails": false,             // optional
+  "membershipInfo": {
+    "showMembers": true,
+    "type": "MEMBERSHIP",
+    "creditValue": 100,              // optional, CREDIT type
+    "enableCreditTopup": true,       // optional, CREDIT type
+    "isAccumulateCredit": false,     // optional, CREDIT type
+    "isAccumulateTopupCredit": false,// optional, CREDIT type
+    "minCreditTopup": 10,            // optional, CREDIT type
+    "maxCreditTopup": 1000           // optional, CREDIT type
+  }
+}
+```
+
+`membership tier create` body — `productId` goes **in the body**, not as a flag. One tier
+carries all its pricing options in `periods[]` (monthly + yearly + lifetime = one tier,
+three periods), so do not create a separate tier per billing cycle:
+
+```jsonc
+{
+  "productId": "prd-42",
+  "name": "Pro",
+  "description": "Semua materi",
+  "notes": "internal",              // optional
+  "limit": 100,                     // optional, max members
+  "upfrontFee": 50000,              // optional, one-off joining fee
+  "finishMembershipAt": "2027-01-01T00:00:00.000Z", // optional
+  "gracePeriodInDays": 3,           // optional
+  "trialPeriodInDays": 7,           // optional
+  "trialCredit": 10,                // optional, CREDIT type
+  "isTrialAvailable": true,         // optional, must be true to enable the trial
+  "redirectUrl": "https://example.com/thanks", // optional
+  "periods": [
+    { "monthPeriod": 1,  "amount": 99000,   "status": "ACTIVE" },
+    { "monthPeriod": 12, "amount": 990000,  "status": "ACTIVE" },
+    { "isLifetime": true, "amount": 2500000, "status": "ACTIVE" }
+  ]
+}
+```
+
+`periods[]` fields: `monthPeriod` (cycle in months, omit when `isLifetime`), `amount`
+(IDR), `credit` (CREDIT products), `isLifetime`, `status` (`ACTIVE` to sell it).
+
+```bash
 # SaaS & Software Licensing
 npx -y mayar@latest saas activate <licenseCode> <productId>
 npx -y mayar@latest saas deactivate <licenseCode> <productId>
