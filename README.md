@@ -164,18 +164,18 @@ Installments
   installment get <id>
   installment create --data <json|@file>
 
-Memberships
-  membership members --productId <id> [--limit --after]
-  membership tiers   --productId <id> [--limit --after]
+Memberships                              (see the Memberships guide below)
+  membership product create            --data <json|@file>   {name, description, membershipInfo}
+  membership product get <productId>
+  membership tier create               --data <json|@file>   {productId, name, description, periods[]}
+  membership tier get <tierId>         --productId <id>
+  membership tiers   --productId <id> [--limit --after]      list every tier of a product
   membership register --data <json|@file>
+  membership members --productId <id> [--limit --after]
   membership get <memberId>            --productId <id>
   membership update <memberId>         --productId <id> [--data <json|@file>]
   membership cancel <memberId>         --productId <id>
   membership create-invoice <memberId> --productId <id>
-  membership product create            --data <json|@file>
-  membership product get <productId>
-  membership tier create               --data <json|@file>
-  membership tier get <tierId>         --productId <id>
 
 Credit wallets
   credit balance  --customerId <id> --productId <id> [--tierId <id>]
@@ -277,6 +277,132 @@ mayar saas verify LIC-123 prd-42
 # Pipe raw JSON to jq
 mayar invoice list --json | jq '.data[] | {id, status}'
 ```
+
+## Memberships
+
+A membership in Mayar is three nested objects. Create them in this order — each level needs the id of the one above it:
+
+```
+membership product        the subscription product itself ("Kelas Premium")
+  └── tier                a plan inside it ("Basic", "Pro") — carries the pricing
+        └── period        one billing option of that tier (1 month, 12 months, lifetime)
+              └── member  a customer subscribed to that tier
+```
+
+### 1. Create the product
+
+```bash
+mayar membership product create --data '{
+  "name": "Kelas Premium",
+  "description": "Akses penuh ke seluruh materi",
+  "membershipInfo": { "showMembers": true, "type": "MEMBERSHIP" }
+}'
+```
+
+Returns the product; keep its `id` — every command below needs it as `--productId`.
+
+| Field                       | Required | Notes                                                            |
+| --------------------------- | -------- | ---------------------------------------------------------------- |
+| `name`                      | yes      | Product name shown to buyers                                       |
+| `description`               | yes      | Product description                                                |
+| `redirectUrl`               | no       | Where the buyer lands after a successful payment                    |
+| `coverImage`                | no       | Cover image URL                                                     |
+| `hidePortalAccessInEmails`  | no       | `true` to omit the member-portal link from transactional emails     |
+| `membershipInfo`            | yes      | Object — see below                                                  |
+
+`membershipInfo` fields:
+
+| Field                      | Required | Notes                                                                   |
+| -------------------------- | -------- | ----------------------------------------------------------------------- |
+| `showMembers`              | yes      | `true` to list members publicly on the product page                       |
+| `type`                     | yes      | **Uppercase enum**: `MEMBERSHIP`, `SAAS`, or `CREDIT`. Anything else is rejected |
+| `creditValue`              | no       | Credits granted per billing cycle (`CREDIT` type)                         |
+| `enableCreditTopup`        | no       | Let members buy extra credit                                              |
+| `isAccumulateCredit`       | no       | Unused credit rolls over to the next cycle instead of resetting            |
+| `isAccumulateTopupCredit`  | no       | Same rollover rule, for topped-up credit                                   |
+| `minCreditTopup`           | no       | Minimum credit per top-up                                                  |
+| `maxCreditTopup`           | no       | Maximum credit per top-up                                                  |
+
+The `creditValue`/`*Credit*` fields only do anything when `type` is `CREDIT` — omit them for a plain `MEMBERSHIP`.
+
+### 2. Create a tier
+
+A tier holds the prices. `periods` is the list of billing options a buyer can pick, so a tier with monthly *and* annual pricing is **one** tier with two periods — not two tiers.
+
+```bash
+mayar membership tier create --data '{
+  "productId": "prd-42",
+  "name": "Pro",
+  "description": "Semua materi + sesi live bulanan",
+  "trialPeriodInDays": 7,
+  "isTrialAvailable": true,
+  "periods": [
+    { "monthPeriod": 1,  "amount": 99000,  "status": "ACTIVE" },
+    { "monthPeriod": 12, "amount": 990000, "status": "ACTIVE" },
+    { "isLifetime": true, "amount": 2500000, "status": "ACTIVE" }
+  ]
+}'
+```
+
+| Field                 | Required | Notes                                                               |
+| --------------------- | -------- | ------------------------------------------------------------------- |
+| `productId`           | yes      | Id from step 1 — passed **in the body**, not as a flag                |
+| `name`                | yes      | Tier name                                                             |
+| `description`         | yes      | Tier description                                                      |
+| `notes`               | no       | Internal note, not shown to buyers                                     |
+| `limit`               | no       | Cap on how many members may join this tier                             |
+| `upfrontFee`          | no       | One-off joining fee charged on top of the first period                  |
+| `finishMembershipAt`  | no       | ISO date when the membership ends regardless of billing                 |
+| `gracePeriodInDays`   | no       | Days of continued access after a missed payment                         |
+| `trialPeriodInDays`   | no       | Free-trial length                                                       |
+| `trialCredit`         | no       | Credits granted during the trial (`CREDIT` products)                     |
+| `isTrialAvailable`    | no       | Set `true` to actually enable the trial                                  |
+| `redirectUrl`         | no       | Post-checkout redirect for this tier                                     |
+| `periods`             | yes      | Array — at least one entry                                               |
+
+Each `periods[]` entry:
+
+| Field         | Notes                                                                        |
+| ------------- | ---------------------------------------------------------------------------- |
+| `monthPeriod` | Billing cycle in months (`1` = monthly, `12` = yearly). Omit when `isLifetime` |
+| `amount`      | Price in IDR for this cycle                                                    |
+| `credit`      | Credits granted per cycle (`CREDIT` products)                                   |
+| `isLifetime`  | `true` for a one-time payment with no renewal                                   |
+| `status`      | `ACTIVE` to sell it, otherwise it stays hidden                                  |
+
+### 3. Register a member and bill them
+
+```bash
+# Who can they subscribe to?
+mayar membership tiers --productId prd-42
+
+# Subscribe a customer to a tier — the body identifies the product, the tier, and the buyer.
+# Run `mayar docs membership` for the authoritative member field list.
+mayar membership register --data '{
+  "productId": "prd-42",
+  "membershipTierId": "tier-7",
+  "name": "Andre",
+  "email": "andre@example.com",
+  "mobile": "08123456789"
+}'
+
+# Then, per member
+mayar membership members --productId prd-42 --limit 20
+mayar membership get <memberId>            --productId prd-42
+mayar membership update <memberId>         --productId prd-42 --data '{"membershipTierId":"tier-9"}'
+mayar membership create-invoice <memberId> --productId prd-42   # bill the next cycle now
+mayar membership cancel <memberId>         --productId prd-42
+```
+
+### Reading things back
+
+```bash
+mayar membership product get prd-42
+mayar membership tier get tier-7 --productId prd-42     # --productId is required here
+mayar membership tiers --productId prd-42 --json | jq '.data[] | {id, name, amount}'
+```
+
+Two traps worth remembering: `tiers` (plural) **lists** a product's tiers while `tier` (singular) is the create/get sub-namespace, and `tier get` needs `--productId` even though the tier id alone looks sufficient. Every write command takes `--data` as either inline JSON or `@path/to/file.json`.
 
 ## Config
 
