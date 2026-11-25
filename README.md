@@ -98,7 +98,7 @@ Account
 Invoices
   invoice list [--limit --after --status --search]
   invoice get <id>
-  invoice close <id> | reopen <id>      POST /hl/v2/invoices/{id}/{open|close}
+  invoice close <id> | reopen <id>      POST /hl/v2/products/{id}/{open|close}
   invoice status <id> <action>          action ∈ open|close|active|closed|unlisted
   invoice edit <id> --data <json|@file>
   invoice filter --email <email> [--limit --after --status --search]
@@ -133,7 +133,7 @@ Customers
   customer list                          GET  /hl/v2/customers
   customer create --data <json|@file>
   customer search <email>                GET  /hl/v2/customers/detail?email=
-  customer update <fromEmail> <toEmail>
+  customer update <customerId> <newEmail>   POST /hl/v2/customers/{id}/update
   customer magic-link <email>            POST /hl/v2/customers/portal-login
 
 Transactions
@@ -429,6 +429,30 @@ To rotate keys: `mayar config reset && mayar init`.
 - `MAYAR_API_URL` overrides the base URL — useful for staging or custom proxy environments.
 - `mayar whoami` decodes the JWT locally and verifies the key live against `/hl/v2/balances`.
 - **v1.0.0 migration**: all API paths moved from `/hl/v1/*` to `/hl/v2/*`. `--page` is no longer used (v2 has no page numbers); the cursor is returned as `nextStartingAfter` in each response and passed as `--after` for the next page.
+
+## Troubleshooting
+
+Find the start of the error text in the left column.
+
+| Error text | What it means | What to do |
+|---|---|---|
+| `... failed (401) — Unauthorized` + `Hint: api.mayar.id (production) rejected the key for ...` | The key is valid in form, but Mayar refused it here. Often it is a key for the other environment. | Run again with `--sandbox` (or `--production`). Check with `mayar status` which credential is in use. |
+| `... failed (401)` + `Hint: The API key is invalid or expired` | The key is not a JWT, or it was revoked. | Get a new key in the dashboard → Integration → API Key, then `mayar api-key <key>`. |
+| `... failed (<status>) — Mayar rejected the request: ...` | Mayar answered HTTP 2xx but said the request failed. The CLI exits 1. | Read the message and the detail line under it. Usually a field is missing or wrong in `--data`. |
+| `... must be a whole number above 0 ... Nothing was sent to Mayar.` | A guard refused a money field (`amount`, `price`, `rate`). | Use a whole Rupiah amount, for example `10000`, not `10000.5`. |
+| `expiredAt is in the past ...` | A guard refused an expiry date. | Use a future date (ISO text or epoch). |
+| `--limit must be a whole number from 1 to 50` | The page size is out of range. | Use `--limit 1` to `--limit 50`, and `--after <cursor>` for the next page. |
+| `Invalid JSON in --data: ...` / `Cannot read --data file ...` | `--data` is not valid JSON, or the file does not exist. | Put inline JSON in single quotes: `--data '{"name":"x"}'`, or use `--data @file.json`. |
+| `Refused webhook URL ...` | The webhook URL is not a public http(s) address. | Use a public URL. For local testing, use a public tunnel URL. |
+| `HTML-like content in ...` | Customer-facing text contains markup. | Remove the markup. In a terminal, you can confirm and send it anyway. |
+| `... failed (429) — rate limited` + `Hint: Gave up after 3 retries` | Mayar rate-limited the requests. | Wait for the time in the hint, then run again. Slow down loops in scripts. |
+| `... failed (5xx)` + `Hint: This is an error on the Mayar side` | Mayar had an internal error. | Try again later. If it keeps failing, run with `MAYAR_DEBUG=1` and send the output to Mayar. |
+| `Request timed out after 30s` | Mayar did not answer. | Try again, or set `MAYAR_TIMEOUT_MS=60000`. |
+| `Network error on ... ENOTFOUND` / `ECONNREFUSED` | No connection to the API host. | Check your network, and `MAYAR_API_URL` if you set it. |
+| `Invalid endpoint "..." in .../config.json` | The saved environment is not `sandbox` or `production`. | Run `mayar config reset`, or pass `--sandbox` / `--production`. |
+| `Warning: ... is the old Mayar sandbox domain` | `MAYAR_SANDBOX_LEGACY=1` or a `mayar.club` URL is in use. | Remove it. `--sandbox` uses `api.mayar.io`. |
+| `Warning: unknown flag --...` | A flag name is misspelled, and it took the next argument as its value. | Check the spelling with `mayar --help`. |
+| `mayar customer update needs the customer ID` | `customer update` takes the customer ID, not the old email. | `mayar customer search <email>` shows the ID. |
 
 ## Security
 

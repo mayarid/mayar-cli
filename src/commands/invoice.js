@@ -57,8 +57,10 @@ async function run({ apiKey, flags, positional }) {
     case 'reopen': {
       if (!rest[0]) throw new Error(`Usage: mayar invoice ${sub} <id>`);
       const action = sub === 'reopen' ? 'open' : 'close';
-      // v2 consolidates status changes under a single action endpoint.
-      const res = await api.request('POST', `/hl/v2/invoices/${encodeURIComponent(rest[0])}/${action}`, { apiKey });
+      // An invoice is a payment link: v2 changes its status through
+      // /hl/v2/products/{id}/{action} (docs.mayar.id migration guide).
+      // /hl/v2/invoices/{id}/{action} answers 404 (checked 2026-11-25).
+      const res = await api.request('POST', `/hl/v2/products/${encodeURIComponent(rest[0])}/${action}`, { apiKey });
       checkResp(res); ui.jsonOut(res.body); return;
     }
     case 'status': {
@@ -66,7 +68,7 @@ async function run({ apiKey, flags, positional }) {
       if (!STATUS_ACTIONS.includes(rest[1])) {
         throw new Error(`Invalid action "${rest[1]}". Must be one of: ${STATUS_ACTIONS.join(', ')}`);
       }
-      const res = await api.request('POST', `/hl/v2/invoices/${encodeURIComponent(rest[0])}/${rest[1]}`, { apiKey });
+      const res = await api.request('POST', `/hl/v2/products/${encodeURIComponent(rest[0])}/${rest[1]}`, { apiKey });
       checkResp(res); ui.jsonOut(res.body); return;
     }
     case 'edit': {

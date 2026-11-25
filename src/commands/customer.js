@@ -34,10 +34,16 @@ async function run({ apiKey, flags, positional }) {
       checkResp(res); ui.jsonOut(res.body); return;
     }
     case 'update': {
-      if (rest.length < 2) throw new Error('Usage: mayar customer update <fromEmail> <toEmail>');
+      if (rest.length < 2) throw new Error('Usage: mayar customer update <customerId> <newEmail>');
+      // v2 updates by customer ID: POST /hl/v2/customers/{id}/update. The old
+      // /hl/v2/customers/update (by email) answers 404 (checked 2026-11-25).
+      if (rest[0].includes('@')) {
+        throw new Error('mayar customer update needs the customer ID, not the email. ' +
+          `Find the ID with: mayar customer search ${rest[0]}`);
+      }
       await confirmPlainText({ toEmail: rest[1] }, ['toEmail']);
-      const res = await api.request('POST', '/hl/v2/customers/update', {
-        apiKey, body: { fromEmail: rest[0], toEmail: rest[1] },
+      const res = await api.request('POST', `/hl/v2/customers/${encodeURIComponent(rest[0])}/update`, {
+        apiKey, body: { toEmail: rest[1] },
       });
       checkResp(res); ui.jsonOut(res.body); return;
     }

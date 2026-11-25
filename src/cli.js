@@ -65,7 +65,7 @@ ${ui.bold('Customers:')}
   customer list
   customer create --data <json|@file>
   customer search <email>
-  customer update <fromEmail> <toEmail>
+  customer update <customerId> <newEmail>
   customer magic-link <email>
 
 ${ui.bold('Transactions:')}

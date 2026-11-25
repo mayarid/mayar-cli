@@ -18,20 +18,20 @@ const BODY = { name: 'Budi', amount: 10000 };
 // [command module, positional, flags, expected { method, path, body?, query? }]
 const CASES = [
   ['balance', [], {}, { method: 'GET', path: '/hl/v2/balances' }],
-  ['whoami', [], {}, { method: 'GET', path: '/hl/v1/balance' }],
+  ['whoami', [], {}, { method: 'GET', path: '/hl/v2/balances' }],
   ['bundling', ['list'], {}, { method: 'GET', path: '/hl/v2/bundling' }],
   ['bundling', ['get', 'B1'], {}, { method: 'GET', path: '/hl/v2/bundling/B1' }],
-  ['credit', ['balance'], { customerId: 'C1', productId: 'P1' }, { method: 'GET', path: '/hl/v2/credit/customer/balance', query: { customerId: 'C1', productId: 'P1' } }],
-  ['credit', ['add'], { data: D }, { method: 'POST', path: '/hl/v2/credit/customer/add-credit', body: BODY }],
-  ['credit', ['spend'], { data: D }, { method: 'POST', path: '/hl/v2/credit/customer/spend', body: BODY }],
-  ['credit', ['history', 'C1'], { productId: 'P1', limit: '5' }, { method: 'GET', path: '/hl/v2/credit/customer/paginate-credit-history/C1', query: { productId: 'P1', limit: 5 } }],
-  ['credit', ['register-usage'], { data: D }, { method: 'POST', path: '/hl/v2/credit/credit-usage/customer/regist', body: BODY }],
-  ['credit', ['register-membership'], { data: D }, { method: 'POST', path: '/hl/v2/credit/membership/customer/regist', body: BODY }],
-  ['credit', ['checkout'], { data: D }, { method: 'POST', path: '/hl/v2/credit/generate/immutable/checkout', body: BODY }],
+  ['credit', ['balance'], { customerId: 'C1', productId: 'P1' }, { method: 'GET', path: '/credit/v2/credit/customer/balance', query: { customerId: 'C1', productId: 'P1' } }],
+  ['credit', ['add'], { data: D }, { method: 'POST', path: '/credit/v2/credit/customer/add-credit', body: BODY }],
+  ['credit', ['spend'], { data: D }, { method: 'POST', path: '/credit/v2/credit/customer/spend', body: BODY }],
+  ['credit', ['history', 'C1'], { productId: 'P1', limit: '5' }, { method: 'GET', path: '/credit/v2/credit/customer/paginate-credit-history/C1', query: { productId: 'P1', limit: 5 } }],
+  ['credit', ['register-usage'], { data: D }, { method: 'POST', path: '/credit/v2/credit/credit-usage/customer/regist', body: BODY }],
+  ['credit', ['register-membership'], { data: D }, { method: 'POST', path: '/credit/v2/credit/membership/customer/regist', body: BODY }],
+  ['credit', ['checkout'], { data: D }, { method: 'POST', path: '/credit/v2/credit/generate/immutable/checkout', body: BODY }],
   ['customer', ['list'], {}, { method: 'GET', path: '/hl/v2/customers' }],
   ['customer', ['create'], { data: D }, { method: 'POST', path: '/hl/v2/customers/create', body: BODY }],
   ['customer', ['search', 'a@x.co'], {}, { method: 'GET', path: '/hl/v2/customers/detail', query: { email: 'a@x.co' } }],
-  ['customer', ['update', 'a@x.co', 'b@x.co'], {}, { method: 'POST', path: '/hl/v2/customers/update', body: { fromEmail: 'a@x.co', toEmail: 'b@x.co' } }],
+  ['customer', ['update', 'CU1', 'b@x.co'], {}, { method: 'POST', path: '/hl/v2/customers/CU1/update', body: { toEmail: 'b@x.co' } }],
   ['customer', ['magic-link', 'a@x.co'], {}, { method: 'POST', path: '/hl/v2/customers/portal-login', body: { email: 'a@x.co' } }],
   ['discount', ['create'], { data: D }, { method: 'POST', path: '/hl/v2/coupons/create', body: BODY }],
   ['discount', ['get', 'D1'], {}, { method: 'GET', path: '/hl/v2/coupons/D1' }],
@@ -43,9 +43,9 @@ const CASES = [
   ['invoice', ['list'], {}, { method: 'GET', path: '/hl/v2/invoices' }],
   ['invoice', ['filter'], { email: 'a@x.co' }, { method: 'GET', path: '/hl/v2/invoices/filter', query: { email: 'a@x.co' } }],
   ['invoice', ['get', 'V1'], {}, { method: 'GET', path: '/hl/v2/invoices/V1' }],
-  ['invoice', ['close', 'V1'], {}, { method: 'POST', path: '/hl/v2/invoices/V1/close' }],
-  ['invoice', ['reopen', 'V1'], {}, { method: 'POST', path: '/hl/v2/invoices/V1/open' }],
-  ['invoice', ['status', 'V1', 'unlisted'], {}, { method: 'POST', path: '/hl/v2/invoices/V1/unlisted' }],
+  ['invoice', ['close', 'V1'], {}, { method: 'POST', path: '/hl/v2/products/V1/close' }],
+  ['invoice', ['reopen', 'V1'], {}, { method: 'POST', path: '/hl/v2/products/V1/open' }],
+  ['invoice', ['status', 'V1', 'unlisted'], {}, { method: 'POST', path: '/hl/v2/products/V1/unlisted' }],
   ['invoice', ['edit', 'V1'], { data: D }, { method: 'POST', path: '/hl/v2/invoices/V1/update', body: { ...BODY, id: 'V1' } }],
   ['invoice', ['create'], { data: D }, { method: 'POST', path: '/hl/v2/invoices/create', body: BODY }],
   ['membership', ['members'], { productId: 'P1' }, { method: 'GET', path: '/hl/v2/memberships/members', query: { productId: 'P1' } }],
@@ -78,7 +78,7 @@ const CASES = [
   ['qrcode', ['static'], {}, { method: 'GET', path: '/hl/v2/qr-codes/static' }],
   ['qrcode', ['channels'], {}, { method: 'GET', path: '/hl/v2/payment-channels' }],
   ['review', ['list'], {}, { method: 'GET', path: '/hl/v2/reviews' }],
-  ['review', ['stats'], {}, { method: 'GET', path: '/hl/v2/merchants/reviews/stats' }],
+  ['review', ['stats'], {}, { method: 'GET', path: '/hl/v2/reviews/stats' }],
   ['review', ['stats', 'R1'], {}, { method: 'GET', path: '/hl/v2/products/R1/reviews/stats' }],
   ['review', ['create'], { data: D }, { method: 'POST', path: '/hl/v2/reviews/create', body: BODY }],
   ['review', ['update', 'W1'], { data: D }, { method: 'POST', path: '/hl/v2/reviews/W1/update', body: { ...BODY, id: 'W1' } }],
@@ -140,6 +140,10 @@ describe('every command sends the expected request', () => {
       assert.equal(c.apiKey, 'test-key');
     });
   }
+});
+
+test('customer update refuses an email where the customer ID belongs', async () => {
+  await assert.rejects(dispatch('customer', ['update', 'a@x.co', 'b@x.co'], {}), /needs the customer ID.*mayar customer search a@x\.co/);
 });
 
 describe('credential order', () => {

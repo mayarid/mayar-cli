@@ -12,6 +12,29 @@
 
 ---
 
+## 0. Live verification (added 2026-11-25)
+
+The sandbox dashboard (web.mayar.io) was down, so no sandbox key was
+available. The path drift (G03) was checked on production `api.mayar.id`
+without changing data: GET calls with the saved key (which Mayar refused with
+401), and POST calls with a deliberately fake key. Mayar checks the route
+before the key, so **404 means the path does not exist** and **401 means it
+exists**. Controls: `/hl/v2/this-path-does-not-exist` → 404,
+`/hl/v2/invoices/create` → 401.
+
+| CLI path (before 1.3.0) | Result | Correct path | Result |
+|---|---|---|---|
+| `GET /hl/v1/balance` (whoami) | timeout (30s) | `GET /hl/v2/balances` | 401 |
+| `GET /hl/v2/merchants/reviews/stats` | 404 | `GET /hl/v2/reviews/stats` | 401 |
+| `POST /hl/v2/invoices/{id}/close`, `/open` | 404 | `POST /hl/v2/products/{id}/close` | 401 |
+| `POST /hl/v2/customers/update` | 404 | `POST /hl/v2/customers/{id}/update` | 401 |
+| `/hl/v2/credit/...` (all 7) | 404 | `/credit/v2/credit/...` | 401, or HTTP 200 with `statusCode: 401` in the body |
+
+The `credit` routes answer a bad key with HTTP 200 and `statusCode: 401` in the
+body: a live example of a rejected response (G01). All five drifts are fixed in
+1.3.0. Still unverified: `product list --stock` (needs a valid key) and sandbox
+login on `auth.mayar.io` (needs the sandbox).
+
 ## 1. Executive summary
 
 - mayar-mcp is built as a safe layer for an AI agent. It checks input before it sends anything. mayar-cli sends whatever the user types. The biggest difference is **input validation on money, dates and names** (G02).

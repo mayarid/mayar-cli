@@ -3,7 +3,8 @@ const ui = require('../ui');
 const { decodeJwt, identity } = require('../jwt');
 const { isRejected } = require('../util');
 
-const VERIFY_PATH = '/hl/v1/balance';
+// /hl/v1/balance does not answer (timed out, checked 2026-11-25).
+const VERIFY_PATH = '/hl/v2/balances';
 
 async function run({ apiKey, flags }) {
   const masked = apiKey.slice(0, 6) + '…' + apiKey.slice(-4);

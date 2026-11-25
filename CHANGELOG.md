@@ -70,6 +70,22 @@ All notable changes to `mayar` (mayar-cli) are listed here. The format follows
 
 ### Fixed
 
+Wrong API paths. Each one was checked on `api.mayar.id` on 2026-11-25 (the old
+path answers 404, or does not answer).
+
+- `credit` (all 7 subcommands): `/hl/v2/credit/...` → `/credit/v2/credit/...`.
+- `invoice close`, `invoice reopen`, `invoice status`:
+  `/hl/v2/invoices/{id}/{action}` → `/hl/v2/products/{id}/{action}`.
+- `customer update` now takes the customer ID: `mayar customer update
+  <customerId> <newEmail>` → `POST /hl/v2/customers/{id}/update`. The old form
+  with the old email called a path that does not exist.
+- `review stats` (merchant-wide): `/hl/v2/merchants/reviews/stats` →
+  `/hl/v2/reviews/stats`.
+- `whoami` checks the key with `/hl/v2/balances`. `/hl/v1/balance` did not
+  answer, so `whoami` could hang.
+
+Other fixes:
+
 - `whoami` printed `Endpoint: undefined`.
 - `make version-*` and `make release-*` used the old version in the commit
   message and the tag, and did not commit `package-lock.json`.

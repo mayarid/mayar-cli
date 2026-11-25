@@ -60,7 +60,7 @@ async function run({ apiKey, flags, positional }) {
       const productId = rest[0];
       const path = productId
         ? `/hl/v2/products/${encodeURIComponent(productId)}/reviews/stats`
-        : '/hl/v2/merchants/reviews/stats';
+        : '/hl/v2/reviews/stats'; // /hl/v2/merchants/reviews/stats answers 404 (checked 2026-11-25)
       const res = await api.request('GET', path, { apiKey });
       checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
