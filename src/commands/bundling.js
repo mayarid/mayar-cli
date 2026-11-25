@@ -1,6 +1,6 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, pagination, cursorFooter } = require('../util');
+const { pagination, cursorFooter } = require('../util');
 
 const USAGE = 'Usage: mayar bundling <list|get>';
 
@@ -12,7 +12,6 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('GET', '/hl/v2/bundling', {
         apiKey, query: pagination(flags),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       const data = (res.body && res.body.data) || [];
       const rows = data.map((b) => ({
@@ -26,7 +25,7 @@ async function run({ apiKey, flags, positional }) {
     case 'detail': {
       if (!rest[0]) throw new Error('Usage: mayar bundling get <id>');
       const res = await api.request('GET', `/hl/v2/bundling/${encodeURIComponent(rest[0])}`, { apiKey });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     default:
       throw new Error(USAGE);

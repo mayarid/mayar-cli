@@ -1,6 +1,6 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, pagination, cursorFooter } = require('../util');
+const { pagination, cursorFooter } = require('../util');
 
 const USAGE = 'Usage: mayar tx <list|unpaid|daily|product>';
 
@@ -43,7 +43,6 @@ async function run({ apiKey, flags, positional }) {
           fields: flags.fields,
         }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderTx(res.body); return;
     }
@@ -59,19 +58,19 @@ async function run({ apiKey, flags, positional }) {
           fields: flags.fields,
         }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderTx(res.body); return;
     }
     case 'daily': {
       const res = await api.request('GET', '/hl/v2/transactions/daily', { apiKey });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       const d = (res.body && res.body.data) || {};
-      if (d.date)     process.stdout.write(`${ui.bold('Date:')}          ${ui.safe(d.date)}\n`);
-      if (d.tpvCount != null) process.stdout.write(`${ui.bold('Total volume:')} ${Number(d.tpvCount).toLocaleString('id-ID')}\n`);
-      if (d.trxCount != null) process.stdout.write(`${ui.bold('Transactions:')} ${ui.safe(d.trxCount)}\n`);
-      if (!d.date && d.tpvCount == null && d.trxCount == null) ui.jsonOut(res.body);
+      const shown = ui.fields([
+        ['Date', d.date],
+        ['Total volume', d.tpvCount != null ? Number(d.tpvCount).toLocaleString('id-ID') : null],
+        ['Transactions', d.trxCount],
+      ]);
+      if (!shown) ui.jsonOut(res.body);
       return;
     }
     case 'product': {
@@ -79,7 +78,6 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('GET', `/hl/v2/products/${encodeURIComponent(rest[0])}/transactions`, {
         apiKey, query: pagination(flags, { status: flags.status, customerId: flags.customerId, fields: flags.fields }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderTx(res.body); return;
     }

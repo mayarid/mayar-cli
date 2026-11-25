@@ -168,14 +168,41 @@ ${ui.dim('Priority:  invocation flags → NODE_ENV → config.json → productio
 ${ui.dim('Config:   ~/.config/mayar/config.json (chmod 600)')}
 `;
 
-// Command-specific flags that take a value. They are parsed by the generic
-// `--name value` rule below. A flag that is not here and not handled above
-// gets a warning, because it silently takes the next argument as its value.
-const KNOWN_VALUE_FLAGS = new Set([
+// Every flag the CLI knows, in one table: command-line name → { key, bool }.
+// `key` is the property set on `flags`; `bool` flags take no value. Add a new
+// flag here and nowhere else. Any other `--name` is still parsed (taking the
+// next argument as its value) but gets an "unknown flag" warning.
+const FLAGS = new Map();
+const bool = (key, ...names) => names.forEach((n) => FLAGS.set(n, { key, bool: true }));
+const value = (key, ...names) => names.forEach((n) => FLAGS.set(n, { key, bool: false }));
+
+bool('json', '--json');
+bool('force', '--force');
+bool('refresh', '--refresh');
+bool('compact', '--compact');
+bool('all', '--all');
+bool('no-browser', '--no-browser');
+bool('sandbox', '--sandbox');
+bool('production', '--production');
+bool('global', '--global');
+bool('help', '-h', '--help');
+bool('version', '-v', '--version');
+value('section', '--section', '--category');
+value('apiKey', '--api-key');
+value('page', '--page');
+value('pageSize', '--pageSize', '--page-size');
+value('limit', '--limit');
+value('after', '--after', '--starting-after', '--startingAfter');
+value('data', '--data');
+value('env', '--env');
+// Command-specific value flags, read as flags.<name> by the commands.
+for (const name of [
   'customerId', 'email', 'endAt', 'fields', 'membershipTierId', 'paymentLinkId',
   'prioritizeMessage', 'productId', 'rating', 'search', 'startAt', 'status',
   'stock', 'target', 'tierId', 'type', 'urlDestination',
-]);
+]) value(name, `--${name}`);
+
+const KNOWN_KEYS = new Set([...FLAGS.values()].map((f) => f.key));
 
 function parseFlags(argv) {
   const flags = {};
@@ -183,46 +210,22 @@ function parseFlags(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') { positional.push(...argv.slice(i + 1)); break; }
-    if (a === '--json') flags.json = true;
-    else if (a === '--force') flags.force = true;
-    else if (a === '--refresh') flags.refresh = true;
-    else if (a === '--compact') flags.compact = true;
-    else if (a === '--all') flags.all = true;
-    else if (a === '--section' || a === '--category') flags.section = argv[++i];
-    else if (a === '--no-browser') flags['no-browser'] = true;
-    else if (a === '--sandbox') flags.sandbox = true;
-    else if (a === '--global') flags.global = true;
-    else if (a === '--production') flags.production = true;
-    else if (a === '--api-key') flags.apiKey = argv[++i];
-    else if (a.startsWith('--api-key=')) flags.apiKey = a.slice('--api-key='.length);
-    else if (a === '--page') flags.page = argv[++i];
-    else if (a === '--pageSize' || a === '--page-size') flags.pageSize = argv[++i];
-    else if (a === '--limit') flags.limit = argv[++i];
-    else if (a === '--after' || a === '--starting-after' || a === '--startingAfter') flags.after = argv[++i];
-    else if (a === '--data') flags.data = argv[++i];
-    else if (a === '--env') flags.env = argv[++i];
-    else if (a === '-h' || a === '--help') flags.help = true;
-    else if (a === '-v' || a === '--version') flags.version = true;
-    else if (a.startsWith('--')) {
-      const eq = a.indexOf('=');
-      if (eq !== -1) flags[a.slice(2, eq)] = a.slice(eq + 1);
-      else flags[a.slice(2)] = argv[++i];
-    } else {
-      positional.push(a);
-    }
+    if (!a.startsWith('-')) { positional.push(a); continue; }
+    const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+    const name = eq === -1 ? a : a.slice(0, eq);
+    const inline = eq === -1 ? undefined : a.slice(eq + 1);
+    const spec = FLAGS.get(name);
+    if (spec && spec.bool) flags[spec.key] = true;
+    else if (spec) flags[spec.key] = inline ?? argv[++i];
+    else if (a.startsWith('--')) flags[name.slice(2)] = inline ?? argv[++i];
+    else positional.push(a);
   }
   return { flags, positional };
 }
 
-// Flag keys set by the explicit rules in parseFlags.
-const BUILTIN_FLAG_KEYS = new Set([
-  'json', 'force', 'refresh', 'compact', 'all', 'section', 'no-browser', 'sandbox', 'global',
-  'production', 'apiKey', 'page', 'pageSize', 'limit', 'after', 'data', 'env', 'help', 'version',
-]);
-
 function unknownFlags(flags) {
   return Object.keys(flags)
-    .filter((k) => !BUILTIN_FLAG_KEYS.has(k) && !KNOWN_VALUE_FLAGS.has(k))
+    .filter((k) => !KNOWN_KEYS.has(k))
     .map((name) => ({ name, value: flags[name] }));
 }
 
@@ -283,7 +286,7 @@ async function run(argv) {
     if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
     if (cmd === 'skill' || cmd === 'skills') { return await require('./commands/skill').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
     if (cmd === 'api-key' || cmd === 'apikey') {
-      return await require('./commands/apikey').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) });
+      return await require('./commands/apikey').run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
     }
     if (cmd === 'config') {
       if (sub === 'show') {

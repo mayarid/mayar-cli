@@ -60,6 +60,12 @@ function setRuntimeEndpoint(ep) {
   _runtimeEndpoint = ep;
 }
 
+// The environment chosen for this run with --sandbox/--production/--env, or
+// null when none was given.
+function runtimeEndpoint() {
+  return _runtimeEndpoint;
+}
+
 function resolveEndpoint() {
   if (_runtimeEndpoint !== null) return _runtimeEndpoint;
   if (process.env.NODE_ENV === 'development') return 'sandbox';
@@ -131,6 +137,6 @@ function resolveCredential(flags = {}, cfg = load()) {
 module.exports = {
   load, save, clear, file, dir, isDev,
   apiBaseUrl, authBaseUrl, webBaseUrl,
-  setRuntimeEndpoint, resolveEndpoint, resolveCredential,
+  setRuntimeEndpoint, runtimeEndpoint, resolveEndpoint, resolveCredential,
   _resetLegacyWarning,
 };

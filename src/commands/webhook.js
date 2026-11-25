@@ -1,6 +1,6 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, pagination, cursorFooter } = require('../util');
+const { pagination, cursorFooter } = require('../util');
 const { checkWebhookUrl } = require('../security');
 
 const USAGE = 'Usage: mayar webhook <register|test|history|new-history|retry>';
@@ -32,7 +32,7 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('POST', '/hl/v2/webhooks/update', {
         apiKey, body: { urlHook: rest[0] },
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'test': {
       if (!rest[0]) throw new Error('Usage: mayar webhook test <url>');
@@ -42,7 +42,7 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('POST', '/hl/v2/webhooks/test', {
         apiKey, body: { urlHook: rest[0] },
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'history': {
       const res = await api.request('GET', '/hl/v2/webhooks/history', {
@@ -53,7 +53,6 @@ async function run({ apiKey, flags, positional }) {
           startAt: flags.startAt, endAt: flags.endAt,
         }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderHistory(res.body); return;
     }
@@ -62,7 +61,6 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('GET', '/hl/v2/webhooks/new-history', {
         apiKey, query: pagination(flags),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderHistory(res.body); return;
     }
@@ -71,7 +69,7 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('POST', '/hl/v2/webhooks/retry', {
         apiKey, body: { webhookHistoryId: rest[0] },
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     default:
       throw new Error(USAGE);

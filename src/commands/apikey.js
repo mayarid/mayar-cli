@@ -3,14 +3,13 @@ const ui = require('../ui');
 
 // Save an API key. The key is saved for the environment chosen with
 // --sandbox, --production or --env; without one of those it is production.
-async function run({ positional, flags = {} }) {
+async function run({ positional }) {
   const [key] = positional;
   if (!key || !key.trim()) {
     throw new Error('Usage: mayar api-key <your-api-key> [--sandbox]');
   }
   const trimmed = key.trim();
-  const explicit = flags.sandbox || flags.production || flags.env;
-  const endpoint = explicit ? config.resolveEndpoint() : 'production';
+  const endpoint = config.runtimeEndpoint() ?? 'production';
   const existing = config.load() || {};
   config.save({
     ...existing,

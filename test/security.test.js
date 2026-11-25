@@ -58,6 +58,9 @@ describe('checkWebhookUrl', () => {
     ['http://127.0.0.1/hook', /loopback/],
     ['http://[::1]:8080/', /loopback/],
     ['http://[::ffff:127.0.0.1]/', /loopback/],
+    ['http://[::127.0.0.1]/', /loopback/], // IPv4-compatible form, rewritten to [::7f00:1]
+    ['http://[::ffff:a9fe:a9fe]/', /cloud metadata/],
+    ['http://[::a00:1]/', /private network/],
     ['http://localhost:3000/', /loopback/],
     ['http://api.localhost/', /loopback/],
     ['http://169.254.169.254/latest/meta-data', /cloud metadata/],

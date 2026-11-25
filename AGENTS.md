@@ -27,7 +27,11 @@ bin/mayar.js          # entry point, calls src/cli.js run()
 src/cli.js            # HELP text, parseFlags, credential resolution, command dispatch
 src/api.js            # the only HTTP transport (https.request) for the Mayar API
 src/config.js         # config file (~/.config/mayar/config.json) + sandbox/production base URLs
-src/util.js           # checkResp, readData (--data), pagination, cursorFooter, maybeJson
+src/response.js       # rejected-response rules + ApiError text (used by api.js)
+src/util.js           # readData (--data), pagination, cursorFooter, confirmPlainText
+src/security.js       # webhook URL guard, output cleaning, HTML detection
+src/guards.js         # input guards (money, expiredAt, --limit)
+src/jwt.js            # decode a JWT credential, read its identity
 src/ui.js             # colors, tables, jsonOut, prompts, banner
 src/commands/<name>.js  # one module per top-level command, exports run({ apiKey, flags, positional })
 test/*.test.js        # node:test suites
@@ -47,7 +51,10 @@ docs/research/        # research notes
   with a `switch` on the subcommand. Register a new command in the `handlers`
   map and in the `HELP` text in `src/cli.js`, and in `README.md`.
 - Every API call goes through `api.request(method, path, { apiKey, body, query })`.
-  Call `checkResp(res)` right after it. Do not call `https` directly from a command.
+  It throws an `ApiError` (`src/response.js`) for any failed reply, including a
+  rejected response, so commands never check the status. Pass `hint5xx` when a
+  command knows the likely cause of a server error. Do not call `https`
+  directly from a command.
 - Encode path parts with `encodeURIComponent`.
 - Read `--data` with `readData(flags.data)` (inline JSON or `@file`).
 - Use `pagination(flags, extra)` for list queries and `cursorFooter` after a table.
@@ -55,8 +62,11 @@ docs/research/        # research notes
   table with `ui.table`. Errors are `throw new Error(...)`; `src/cli.js` prints
   them to stderr and exits 1.
 - Usage errors throw `Usage: mayar <command> ...` messages.
-- API text is untrusted. `ui.table` and `ui.jsonOut` clean it already; wrap any
-  other printed API value in `ui.safe(...)`.
+- API text is untrusted. Print it with `ui.table`, `ui.fields` (label/value
+  lines) or `ui.jsonOut`; they clean it. Use `ui.safe(...)` only for API text
+  inside a sentence.
+- Flags: add every new flag to the `FLAGS` table in `src/cli.js`. A test fails
+  when a command reads a flag that is not in the table.
 - Security checks live in `src/security.js` (pure functions). Webhook URLs go
   through `checkWebhookUrl`; customer-facing text goes through
   `confirmPlainText` in `src/util.js`.

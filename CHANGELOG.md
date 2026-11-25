@@ -57,7 +57,8 @@ All notable changes to `mayar` (mayar-cli) are listed here. The format follows
 
 ### Added
 
-- Requests time out after 30 seconds (`MAYAR_TIMEOUT_MS` to change).
+- Requests time out after 30 seconds for the whole request, including a reply
+  that arrives too slowly (`MAYAR_TIMEOUT_MS` to change).
 - HTTP 429: up to 3 retries with exponential backoff and jitter, honouring
   `Retry-After`. `X-RateLimit-*` headers, when Mayar sends them, appear as
   `_rateLimit` in `--json` output.

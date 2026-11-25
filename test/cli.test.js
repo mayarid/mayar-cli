@@ -10,7 +10,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseFlags } = require('../src/cli');
+const { parseFlags, unknownFlags } = require('../src/cli');
 const membership = require('../src/commands/membership');
 
 describe('parseFlags — long flags with a value (--flag value)', () => {
@@ -350,5 +350,31 @@ describe('membership tier sub-command dispatch (happy path)', () => {
     assert.equal(pathname, '/hl/v2/memberships/tiers/t%2F1');
     assert.equal(opts.apiKey, 'test-key');
     assert.deepEqual(opts.query, { productId: 'prod-9' });
+  });
+});
+
+describe('unknownFlags', () => {
+  test('reports flags that are not in the flag table', () => {
+    const { flags } = parseFlags(['invoice', 'list', '--jsno', 'x', '--productId', 'P1', '--json', '--global']);
+    assert.deepEqual(unknownFlags(flags), [{ name: 'jsno', value: 'x' }]);
+  });
+
+  test('aliases and inline values map to the table key', () => {
+    const { flags } = parseFlags(['--starting-after=c1', '--page-size', '5', '--category', 'api', '-h']);
+    assert.deepEqual(flags, { after: 'c1', pageSize: '5', section: 'api', help: true });
+    assert.deepEqual(unknownFlags(flags), []);
+  });
+
+  test('every flag a command reads is in the flag table', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const dir = path.join(__dirname, '..', 'src', 'commands');
+    const read = new Set();
+    for (const f of fs.readdirSync(dir)) {
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
+      for (const m of src.matchAll(/flags\.([A-Za-z]+)|flags\['([a-z-]+)'\]/g)) read.add(m[1] || m[2]);
+    }
+    const unknown = unknownFlags(Object.fromEntries([...read].map((k) => [k, 'x'])));
+    assert.deepEqual(unknown.map((u) => u.name), [], 'add these to FLAGS in src/cli.js');
   });
 });

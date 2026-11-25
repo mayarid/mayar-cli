@@ -74,10 +74,22 @@ function askSecret(question) {
   });
 }
 
-// Text from the API is untrusted. `safe` removes terminal escape and control
-// sequences before the text reaches the screen. Use it for every API value
-// that is printed outside `table` and `jsonOut`.
-const safe = (v) => stripControl(v);
+// Text from the API is untrusted. `table`, `fields` and `jsonOut` clean it
+// themselves; use `safe` (= stripControl) only for API text printed any other
+// way, for example inside a sentence.
+const safe = stripControl;
+
+// Print "Label:  value" lines with aligned values. Rows with a null, undefined
+// or empty value are skipped. Values are cleaned of escape sequences.
+//   ui.fields([['Code', c.code], ['Discount', `${c.discountValue}%`]])
+function fields(rows) {
+  const shown = rows.filter(([, v]) => v !== null && v !== undefined && v !== '');
+  const width = Math.max(0, ...shown.map(([label]) => label.length + 1));
+  for (const [label, value] of shown) {
+    process.stdout.write(`${bold((label + ':').padEnd(width))} ${stripControl(String(value))}\n`);
+  }
+  return shown.length;
+}
 
 function jsonOut(obj) {
   process.stdout.write(escapeJsonText(JSON.stringify(obj, null, 2)) + '\n');
@@ -194,6 +206,6 @@ async function selectEnvironment(flags = {}) {
 }
 
 module.exports = {
-  printBanner, ask, askSecret, jsonOut, table, pickFromList, selectEnvironment, safe,
+  printBanner, ask, askSecret, jsonOut, table, fields, pickFromList, selectEnvironment, safe,
   dim, bold, red, green, yellow, cyan, magenta,
 };

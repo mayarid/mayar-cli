@@ -1,6 +1,6 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, readData, pagination, cursorFooter } = require('../util');
+const { readData, pagination, cursorFooter } = require('../util');
 
 const USAGE = 'Usage: mayar review <list|stats|create|update|bulk-status|product|product-customer>';
 
@@ -26,8 +26,7 @@ function renderList(body) {
 
 function renderStats(body) {
   const d = (body && body.data) || {};
-  process.stdout.write(`${ui.bold('Total reviews:')}  ${ui.safe(d.total ?? 0)}\n`);
-  process.stdout.write(`${ui.bold('Average rating:')} ${ui.safe(d.average ?? '—')}\n`);
+  ui.fields([['Total reviews', d.total ?? 0], ['Average rating', d.average ?? '—']]);
   if (Array.isArray(d.stats) && d.stats.length) {
     process.stdout.write('\n');
     ui.table(
@@ -52,7 +51,6 @@ async function run({ apiKey, flags, positional }) {
           status: flags.status, paymentLinkId: flags.paymentLinkId, rating: flags.rating,
         }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
@@ -62,7 +60,6 @@ async function run({ apiKey, flags, positional }) {
         ? `/hl/v2/products/${encodeURIComponent(productId)}/reviews/stats`
         : '/hl/v2/reviews/stats'; // /hl/v2/merchants/reviews/stats answers 404 (checked 2026-11-25)
       const res = await api.request('GET', path, { apiKey });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderStats(res.body); return;
     }
@@ -70,7 +67,7 @@ async function run({ apiKey, flags, positional }) {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar review create requires --data <json|@file> ({paymentLinkId,customerEmail,rating})');
       const res = await api.request('POST', '/hl/v2/reviews/create', { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'update': {
       if (!rest[0]) throw new Error('Usage: mayar review update <id> --data <json|@file>');
@@ -78,7 +75,7 @@ async function run({ apiKey, flags, positional }) {
       if (!body) throw new Error('mayar review update requires --data <json|@file>');
       body.id = body.id || rest[0];
       const res = await api.request('POST', `/hl/v2/reviews/${encodeURIComponent(rest[0])}/update`, { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'bulk-status':
     case 'bulkstatus': {
@@ -86,14 +83,13 @@ async function run({ apiKey, flags, positional }) {
       if (!data) throw new Error('mayar review bulk-status requires --data <json|@file> (array of {id,status})');
       const body = Array.isArray(data) ? { input: data } : data;
       const res = await api.request('POST', '/hl/v2/reviews/bulk-status/update', { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'product': {
       if (!rest[0]) throw new Error('Usage: mayar review product <paymentLinkId>');
       const res = await api.request('GET', `/hl/v2/products/${encodeURIComponent(rest[0])}/reviews`, {
         apiKey, query: pagination(flags, { rating: flags.rating, prioritizeMessage: flags.prioritizeMessage }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
@@ -104,7 +100,7 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('GET', `/hl/v2/products/${encodeURIComponent(rest[0])}/reviews/customer`, {
         apiKey, query: { customerId: flags.customerId },
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     default:
       throw new Error(USAGE);

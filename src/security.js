@@ -69,12 +69,13 @@ const BLOCKLISTS = RULES.map(([label, nets]) => {
   return [label, list];
 });
 
-// Turn IPv4-mapped and IPv4-compatible IPv6 forms into plain IPv4, so
-// "::ffff:127.0.0.1" is checked as 127.0.0.1.
+// Turn IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible (::a.b.c.d) IPv6
+// forms into plain IPv4, so they are checked as IPv4. The URL parser rewrites
+// both to hex ("[::7f00:1]", "[::ffff:7f00:1]"), so the hex form matters most.
 function unwrapIp(ip) {
   const m = /^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
   if (m) return m[1];
-  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(ip);
+  const hex = /^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(ip);
   if (hex) {
     const a = parseInt(hex[1], 16);
     const b = parseInt(hex[2], 16);

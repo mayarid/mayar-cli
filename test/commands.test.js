@@ -146,97 +146,59 @@ test('customer update refuses an email where the customer ID belongs', async () 
   await assert.rejects(dispatch('customer', ['update', 'a@x.co', 'b@x.co'], {}), /needs the customer ID.*mayar customer search a@x\.co/);
 });
 
-describe('credential order', () => {
-  const config = require('../src/config');
-  const env = process.env.MAYAR_API_KEY;
-  const reset = () => { if (env === undefined) delete process.env.MAYAR_API_KEY; else process.env.MAYAR_API_KEY = env; };
+describe('commands refuse unsafe input before any request', () => {
+  for (const sub of ['register', 'test']) {
+    test(`webhook ${sub} refuses a loopback URL`, async () => {
+      await assert.rejects(dispatch('webhook', [sub, 'http://127.0.0.1:8080/hook'], {}),
+        /Refused webhook URL .*loopback address.*Nothing was sent/);
+    });
+  }
 
-  test('--api-key > MAYAR_API_KEY > saved API key > login token', () => {
-    const cfg = { apiKey: 'saved', auth: { authToken: 'login' } };
+  test('invoice create refuses HTML in an item description without a TTY', async () => {
+    const orig = process.stdin.isTTY;
+    process.stdin.isTTY = false;
     try {
-      process.env.MAYAR_API_KEY = 'env';
-      assert.deepEqual(config.resolveCredential({ apiKey: 'flag' }, cfg), { value: 'flag', source: '--api-key' });
-      assert.deepEqual(config.resolveCredential({}, cfg), { value: 'env', source: 'MAYAR_API_KEY' });
-      delete process.env.MAYAR_API_KEY;
-      assert.deepEqual(config.resolveCredential({}, cfg), { value: 'saved', source: 'saved API key' });
-      assert.deepEqual(config.resolveCredential({}, { auth: { authToken: 'login' } }), { value: 'login', source: 'login token' });
-      assert.equal(config.resolveCredential({}, null), null);
-    } finally { reset(); }
-  });
-
-  test('balance uses the resolved credential, not the login token first', async () => {
-    const calls = await dispatch('balance', [], {});
-    assert.equal(calls[0].apiKey, 'test-key');
+      await assert.rejects(
+        dispatch('invoice', ['create'], { data: '{"name":"Budi","items":[{"description":"<img src=x onerror=1>"}]}' }),
+        /HTML-like content in items\.0\.description/,
+      );
+    } finally { process.stdin.isTTY = orig; }
   });
 });
 
-describe('api-key saves the chosen environment', () => {
+describe('api-key saves the environment chosen for the run', () => {
   const config = require('../src/config');
   const apikey = require('../src/commands/apikey');
   const quiet = async (fn) => { const w = process.stdout.write; process.stdout.write = () => true; try { await fn(); } finally { process.stdout.write = w; } };
 
   test('--sandbox saves a sandbox key', async () => {
     config.setRuntimeEndpoint('sandbox');
-    try { await quiet(() => apikey.run({ positional: ['sk_test'], flags: { sandbox: true } })); } finally { config.setRuntimeEndpoint(null); }
+    try { await quiet(() => apikey.run({ positional: ['sk_test'] })); } finally { config.setRuntimeEndpoint(null); }
     assert.equal(config.load().endpoint, 'sandbox');
   });
 
   test('no flag saves a production key', async () => {
-    await quiet(() => apikey.run({ positional: ['pk_live'], flags: {} }));
+    config.setRuntimeEndpoint(null);
+    await quiet(() => apikey.run({ positional: ['pk_live'] }));
     assert.equal(config.load().endpoint, 'production');
   });
 });
 
-describe('small fixes', () => {
-  const fs = require('node:fs');
-  const config = require('../src/config');
+describe('whoami', () => {
+  const { ApiError } = require('../src/response');
 
-  test('config file is created with mode 0600', { skip: process.platform === 'win32' }, () => {
-    config.clear();
-    config.save({ apiKey: 'x' });
-    assert.equal(fs.statSync(config.file).mode & 0o777, 0o600);
-  });
-
-  test('an invalid stored endpoint is refused, not treated as production', () => {
-    config.save({ apiKey: 'x', endpoint: 'sandbx' });
-    config.setRuntimeEndpoint(null);
-    const prev = process.env.NODE_ENV;
-    delete process.env.NODE_ENV;
+  test('a refused key is a result (exit code 1), not a thrown error', async () => {
+    const orig = api.request;
+    const write = process.stdout.write;
+    let out = '';
+    api.request = async () => { throw new ApiError('x', { status: 401, httpStatus: 401, rejected: false, body: { messages: 'Unauthorized' } }); };
+    process.stdout.write = (s) => { out += s; return true; };
     try {
-      assert.throws(() => config.resolveEndpoint(), /Invalid endpoint "sandbx".*mayar config reset/);
-    } finally {
-      if (prev !== undefined) process.env.NODE_ENV = prev;
-      config.clear();
-    }
-  });
-
-  test('unknown flags are reported; known ones are not', () => {
-    const { parseFlags, unknownFlags } = require('../src/cli');
-    const { flags } = parseFlags(['invoice', 'list', '--jsno', 'x', '--productId', 'P1', '--json', '--global']);
-    assert.deepEqual(unknownFlags(flags), [{ name: 'jsno', value: 'x' }]);
-  });
-
-  test('skill install builds the official installer command', () => {
-    const { installArgs } = require('../src/commands/skill');
-    assert.deepEqual(installArgs({ target: 'claude' }),
-      ['-y', 'skills', 'add', 'mayarid/skills', '--skill', 'mayar-v2', '-y', '-a', 'claude-code']);
-    assert.deepEqual(installArgs({ target: 'all', global: true }).slice(7),
-      ['-a', 'claude-code', '-a', 'codex', '-a', 'cursor', '-a', 'opencode', '-g']);
-    assert.throws(() => installArgs({ target: 'vim' }), /Invalid --target "vim"/);
-  });
-
-  test('skill install runs the installer and reports failure', async () => {
-    const skill = require('../src/commands/skill');
-    const w = process.stdout.write;
-    process.stdout.write = () => true;
-    let seen;
-    try {
-      await skill.run({ flags: { target: 'cursor' }, positional: ['install'] }, { exec: async (args) => { seen = args; return { code: 0, output: '' }; } });
-      await assert.rejects(
-        skill.run({ flags: {}, positional: ['install'] }, { exec: async () => ({ code: 2, output: '' }) }),
-        /skills installer failed \(exit code 2\)/,
-      );
-    } finally { process.stdout.write = w; }
-    assert.deepEqual(seen.slice(-2), ['-a', 'cursor']);
+      await require('../src/commands/whoami').run({ apiKey: 'some-key-123', flags: { json: true } });
+    } finally { api.request = orig; process.stdout.write = write; }
+    const json = JSON.parse(out);
+    assert.equal(json.valid, false);
+    assert.equal(json.status, 401);
+    assert.equal(json.error, 'Unauthorized');
   });
 });

@@ -1,6 +1,6 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, readData } = require('../util');
+const { readData } = require('../util');
 
 const USAGE = 'Usage: mayar payment-link edit <id> --data <json|@file>';
 
@@ -17,7 +17,7 @@ async function run({ apiKey, flags, positional }) {
   const res = await api.request('POST', `/hl/v2/payment-links/${encodeURIComponent(rest[0])}/update`, {
     apiKey, body,
   });
-  checkResp(res); ui.jsonOut(res.body);
+  ui.jsonOut(res.body);
 }
 
 module.exports = { run };

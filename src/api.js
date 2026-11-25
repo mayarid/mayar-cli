@@ -3,6 +3,7 @@ const https = require('https');
 const { URL } = require('url');
 const config = require('./config');
 const { identity } = require('./jwt');
+const { isFailure, toError, isRecord } = require('./response');
 
 const VERSION = require('../package.json').version;
 
@@ -60,6 +61,18 @@ function rateLimitFrom(headers) {
 function sendOnce(method, url, headers, data) {
   return new Promise((resolve, reject) => {
     const mod = url.protocol === 'http:' ? http : https;
+    // One timer for the whole request (connect, send, and the full reply).
+    // req.setTimeout would only measure idle time between bytes.
+    const ms = timeoutMs();
+    const timer = setTimeout(() => {
+      const err = new Error(`Request timed out after ${Math.round(ms / 1000)}s: ${method} ${url.pathname}. ` +
+        'Mayar did not answer. Try again, or set MAYAR_TIMEOUT_MS to wait longer.');
+      err.code = 'ETIMEDOUT';
+      req.destroy(err);
+    }, ms);
+    const done = (fn) => (v) => { clearTimeout(timer); fn(v); };
+    resolve = done(resolve);
+    reject = done(reject);
     const req = mod.request({
       method,
       protocol: url.protocol,
@@ -78,13 +91,6 @@ function sendOnce(method, url, headers, data) {
       });
       res.on('error', reject);
     });
-    const ms = timeoutMs();
-    req.setTimeout(ms, () => {
-      const err = new Error(`Request timed out after ${Math.round(ms / 1000)}s: ${method} ${url.pathname}. ` +
-        'Mayar did not answer. Try again, or set MAYAR_TIMEOUT_MS to wait longer.');
-      err.code = 'ETIMEDOUT';
-      req.destroy(err);
-    });
     req.on('error', (err) => {
       if (err.code === 'ETIMEDOUT') return reject(err);
       const e = new Error(`Network error on ${method} ${url.pathname} (${url.host}): ${err.code || err.message}`);
@@ -97,7 +103,11 @@ function sendOnce(method, url, headers, data) {
   });
 }
 
-async function request(method, pathname, { apiKey, body, query } = {}) {
+// Send a request and return { status, headers, body, raw } for a successful
+// reply. Any failed reply (HTTP error or rejected response) throws an
+// ApiError, so callers never check the status themselves. `hint5xx` replaces
+// the generic hint for a server error when the caller knows the likely cause.
+async function request(method, pathname, { apiKey, body, query, hint5xx } = {}) {
   const base = config.apiBaseUrl();
   const url = new URL(base.replace(/\/+$/, '') + pathname);
   if (query) {
@@ -134,16 +144,26 @@ async function request(method, pathname, { apiKey, body, query } = {}) {
     await clock.sleep(wait);
   }
 
-  res.retries = retries;
-  res.rateLimit = rateLimitFrom(res.headers);
-  res.retryAfterMs = res.status === 429 ? parseRetryAfter(res.headers['retry-after']) : null;
-  res.request = {
-    method,
-    path: url.pathname,
-    host: url.host,
-    endpoint: config.resolveEndpoint(),
-    keyIdentity: identity(token), // who the key claims to be; never the key itself
-  };
+  const rateLimit = rateLimitFrom(res.headers);
+  if (isFailure(res)) {
+    const endpoint = config.resolveEndpoint();
+    const status401 = res.status === 401 || res.body?.statusCode === 401;
+    throw toError(res, {
+      method,
+      path: url.pathname,
+      host: url.host,
+      endpoint,
+      webUrl: config.webBaseUrl(endpoint),
+      // Who the key claims to be, for the 401 hint only. Never the key itself.
+      keyIdentity: status401 ? identity(token) : null,
+      retries,
+      retryAfterMs: res.status === 429 ? parseRetryAfter(res.headers['retry-after']) : null,
+      rateLimit,
+      hint5xx,
+    });
+  }
+  // Surface rate-limit headers in --json output, only when Mayar sends them.
+  if (rateLimit && isRecord(res.body)) res.body._rateLimit = rateLimit;
   return res;
 }
 

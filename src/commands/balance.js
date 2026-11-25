@@ -1,11 +1,9 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp } = require('../util');
 
 // `apiKey` comes from config.resolveCredential, like every other command.
 async function run({ apiKey, flags }) {
   const res = await api.request('GET', '/hl/v2/balances', { apiKey });
-  checkResp(res);
   if (flags.json) return ui.jsonOut(res.body);
   const d = (res.body && res.body.data) || {};
   if (!Object.keys(d).length) return ui.jsonOut(res.body);

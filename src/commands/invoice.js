@@ -1,6 +1,6 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, readData, pagination, cursorFooter, confirmPlainText } = require('../util');
+const { readData, pagination, cursorFooter, confirmPlainText } = require('../util');
 
 // Text an invoice shows to the customer: the top-level customer fields, an
 // optional nested customer object, and each line item's description.
@@ -34,7 +34,6 @@ async function run({ apiKey, flags, positional }) {
         apiKey,
         query: pagination(flags, { status: flags.status, search: flags.search }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
@@ -44,14 +43,13 @@ async function run({ apiKey, flags, positional }) {
         apiKey,
         query: pagination(flags, { email: flags.email, status: flags.status, search: flags.search }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
     case 'get': {
       if (!rest[0]) throw new Error('Usage: mayar invoice get <id>');
       const res = await api.request('GET', `/hl/v2/invoices/${encodeURIComponent(rest[0])}`, { apiKey });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'close':
     case 'reopen': {
@@ -61,7 +59,7 @@ async function run({ apiKey, flags, positional }) {
       // /hl/v2/products/{id}/{action} (docs.mayar.id migration guide).
       // /hl/v2/invoices/{id}/{action} answers 404 (checked 2026-11-25).
       const res = await api.request('POST', `/hl/v2/products/${encodeURIComponent(rest[0])}/${action}`, { apiKey });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'status': {
       if (!rest[0] || !rest[1]) throw new Error(`Usage: mayar invoice status <id> <${STATUS_ACTIONS.join('|')}>`);
@@ -69,7 +67,7 @@ async function run({ apiKey, flags, positional }) {
         throw new Error(`Invalid action "${rest[1]}". Must be one of: ${STATUS_ACTIONS.join(', ')}`);
       }
       const res = await api.request('POST', `/hl/v2/products/${encodeURIComponent(rest[0])}/${rest[1]}`, { apiKey });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'edit': {
       if (!rest[0]) throw new Error('Usage: mayar invoice edit <id> --data <json|@file>');
@@ -77,14 +75,14 @@ async function run({ apiKey, flags, positional }) {
       if (!body) throw new Error('mayar invoice edit requires --data <json|@file>');
       body.id = body.id || rest[0];
       const res = await api.request('POST', `/hl/v2/invoices/${encodeURIComponent(rest[0])}/update`, { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'create': {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar invoice create requires --data <json|@file>');
       await confirmPlainText(body, INVOICE_TEXT_FIELDS);
       const res = await api.request('POST', '/hl/v2/invoices/create', { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     default:
       throw new Error(USAGE);
