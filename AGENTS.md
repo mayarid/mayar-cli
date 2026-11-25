@@ -9,9 +9,13 @@
 ## Project Overview
 
 - **Name**: mayar-cli
-- **Type**: api
-- **Stack**: node-typescript
-- **Description**: TODO - describe what this project does
+- **Type**: CLI (an HTTP client for the Mayar payment API v2)
+- **Stack**: plain Node.js JavaScript, CommonJS (`require`), no build step, no TypeScript
+- **Node**: 22 or later (`package.json` `engines`)
+- **Description**: The `mayar` command. People and AI agents use it to manage
+  Mayar products, invoices, customers, webhooks and more. Published to npm as
+  `mayar`.
+- **Domain words**: read `GLOSSARY.md` first, and use its terms.
 
 ---
 
@@ -19,78 +23,100 @@
 
 ### File Structure
 ```
-TODO - document your project's file structure pattern
-Example:
-src/
-├── routes/       # API route handlers
-├── services/     # Business logic
-├── models/       # Database models/schemas
-├── middleware/    # Express/framework middleware
-├── utils/        # Shared utilities
-└── types/        # TypeScript type definitions
+bin/mayar.js          # entry point, calls src/cli.js run()
+src/cli.js            # HELP text, parseFlags, credential resolution, command dispatch
+src/api.js            # the only HTTP transport (https.request) for the Mayar API
+src/config.js         # config file (~/.config/mayar/config.json) + sandbox/production base URLs
+src/util.js           # checkResp, readData (--data), pagination, cursorFooter, maybeJson
+src/ui.js             # colors, tables, jsonOut, prompts, banner
+src/commands/<name>.js  # one module per top-level command, exports run({ apiKey, flags, positional })
+test/*.test.js        # node:test suites
+test/helpers.js       # captureOutput, temp config dir, local HTTP server
+docs/adr/             # architecture decisions
+docs/research/        # research notes
 ```
 
 ### Naming Conventions
-- Files: `kebab-case.ts`
-- Components: `PascalCase.tsx`
-- Functions: `camelCase`
-- Constants: `UPPER_SNAKE_CASE`
-- Database tables: `snake_case`
-- API endpoints: `kebab-case`
+- Files: `kebab-case.js` (for example `payment-link.js`)
+- Functions and variables: `camelCase`
+- Constants: `UPPER_SNAKE_CASE` (for example `USAGE`, `STATUS_ACTIONS`)
+- Command names and flags: kebab-case on the command line
 
 ### Code Patterns
-- TODO - document patterns used in this project
-- Example: "All route handlers follow: validate input -> call service -> format response"
-- Example: "Use Zod for all runtime validation"
-- Example: "Error responses always use format: { error: string, code: string }"
+- A command module has one `async function run({ apiKey, flags, positional })`
+  with a `switch` on the subcommand. Register a new command in the `handlers`
+  map and in the `HELP` text in `src/cli.js`, and in `README.md`.
+- Every API call goes through `api.request(method, path, { apiKey, body, query })`.
+  Call `checkResp(res)` right after it. Do not call `https` directly from a command.
+- Encode path parts with `encodeURIComponent`.
+- Read `--data` with `readData(flags.data)` (inline JSON or `@file`).
+- Use `pagination(flags, extra)` for list queries and `cursorFooter` after a table.
+- Output: `--json` prints the raw body with `ui.jsonOut`; otherwise print a
+  table with `ui.table`. Errors are `throw new Error(...)`; `src/cli.js` prints
+  them to stderr and exits 1.
+- Usage errors throw `Usage: mayar <command> ...` messages.
 
 ### Testing Conventions
-- Framework: none
-- Command: echo 'no test command configured'
-- Pattern: TODO - describe your test patterns
-- Example: "Integration tests use a real test database, not mocks"
-- Example: "Each test file has its own setup/teardown"
+- Framework: `node:test` and `node:assert/strict`. No test dependencies.
+- Command: `npm test` (coverage: `npm run test:coverage`)
+- Pattern: to test a command without network, replace `api.request` with a stub
+  that records `{ method, pathname, opts }`, run the command, and restore the
+  stub in `finally`. See the membership tests in `test/cli.test.js`.
+- To test `src/api.js`, use the local HTTP server in `test/helpers.js` with
+  `MAYAR_API_URL`.
+- Never call the real Mayar API from a test.
 
 ---
 
 ## Known Gotchas
 
-- TODO - document things that are surprising or non-obvious
-- Example: "Prisma unique constraint errors throw P2002, need explicit handling"
-- Example: "Test database needs cleanup between runs — use beforeEach, not beforeAll"
-- Example: "The auth middleware reads from both cookie and Authorization header"
+- `--sandbox` must point to `api.mayar.io`. `api.mayar.club` is an old domain.
+- `parseFlags` takes the next argument as the value of any unknown `--flag`.
+- A Mayar reply can have HTTP 200 and still say the request failed (a
+  "rejected response" in `GLOSSARY.md`).
+- `ui.js` decides colors once, from `process.stdout.isTTY`, when it loads.
+- Config is read on every `config.load()` call. Tests must point
+  `XDG_CONFIG_HOME` to a temp folder (see `test/helpers.js`).
 
 ---
 
 ## Architecture Decisions
 
-- TODO - document why things are the way they are
-- Example: "We use JWT instead of sessions because the API serves mobile + web"
-- Example: "Chose Drizzle over Prisma for better type inference and SQL control"
-- Example: "Monorepo with turborepo because shared types between API and web"
+See `docs/adr/`. In short:
+
+- The CLI is a thin client with a few guards. It is not a copy of mayar-mcp's
+  guard layer (`docs/adr/0001-thin-client-with-few-guards.md`).
+- The official agent skill lives in `mayarid/skills`, not in this repo
+  (`docs/adr/0002-official-skill-lives-in-mayarid-skills.md`).
 
 ---
 
 ## Dependencies & Integrations
 
-- TODO - document external service integrations
-- Example: "Email via SendGrid — API key in SENDGRID_API_KEY env var"
-- Example: "File uploads go to S3 bucket defined in AWS_S3_BUCKET"
-- Example: "Auth tokens are RS256 signed — public key at /api/auth/.well-known/jwks.json"
+- Mayar API v2: production `https://api.mayar.id`, sandbox `https://api.mayar.io`.
+  Override with `MAYAR_API_URL`. Docs: https://docs.mayar.id
+- `@mayaross/auth`: the only runtime dependency. It does the browser sign-in for
+  `mayar login`.
+- Credentials: `--api-key`, then `MAYAR_API_KEY`, then the saved API key, then
+  the saved login token.
+- Sibling project: [mayar-mcp](https://github.com/mayarid/mayar-mcp), an MCP
+  server for the same API. Gap analysis: `docs/research/mayar-mcp-gap-analysis.md`.
 
 ---
 
 ## Development Setup
 
 ```bash
-# TODO - document how to run the project locally
-# Example:
-# cp .env.example .env
-# docker-compose up -d    # Start database
-# npm install
-# npm run db:migrate       # Run migrations
-# npm run dev              # Start dev server
+npm install
+npm test
+node bin/mayar.js --help     # or: npm link, then: mayar --help
+MAYAR_API_KEY=<sandbox key> node bin/mayar.js --sandbox balance
 ```
+
+## Release
+
+Follow the checklist at the end of `CHANGELOG.md`. Add an `[Unreleased]` entry
+for every change a user can see.
 
 ---
 

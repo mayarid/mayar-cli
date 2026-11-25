@@ -1,20 +1,20 @@
 # mayar
 
-Command-line interface for the [Mayar](https://docs.mayar.id) API. Zero runtime dependencies — Node.js 18+ stdlib only.
+Command-line interface for the [Mayar](https://docs.mayar.id) API. Requires Node.js 22 or later. One runtime dependency: [`@mayaross/auth`](https://www.npmjs.com/package/@mayaross/auth), used by `mayar login`.
 
 ## Install
 
-**One-liner (no npm required):**
+**One-liner:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh | sh
 ```
 
-Downloads the latest tarball from the npm registry, extracts to `~/.local/share/mayar`, and symlinks the binary to `~/.local/bin/mayar`. Requires only `node>=18`, `curl`, and `tar`. Override paths or pin a version:
+Downloads the latest tarball from the npm registry, extracts to `~/.local/share/mayar`, and symlinks the binary to `~/.local/bin/mayar`. Requires `node>=22`, `npm`, `curl`, and `tar` (`npm` installs the one runtime dependency). Override paths or pin a version. Put the variables after the pipe, so they reach `sh`:
 
 ```bash
-MAYAR_VERSION=0.1.9 MAYAR_BIN_DIR=/usr/local/bin \
-  curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh \
+  | MAYAR_VERSION=1.2.0 MAYAR_BIN_DIR=/usr/local/bin sh
 ```
 
 **Via npm:**
