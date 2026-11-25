@@ -1,18 +1,6 @@
 const config = require('../config');
 const ui = require('../ui');
-
-function decodeJwt(token) {
-  if (!token) return null;
-  const parts = String(token).split('.');
-  if (parts.length !== 3) return null;
-  try {
-    const padded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const pad = padded.length % 4 === 0 ? '' : '='.repeat(4 - (padded.length % 4));
-    return JSON.parse(Buffer.from(padded + pad, 'base64').toString('utf8'));
-  } catch (_) {
-    return null;
-  }
-}
+const { decodeJwt } = require('../jwt');
 
 function maskKey(key) {
   if (!key) return null;
@@ -90,16 +78,16 @@ async function run({ flags }) {
   );
 
   if (name) {
-    process.stdout.write(`${ui.bold('User Name:')}     ${name}\n`);
+    process.stdout.write(`${ui.bold('User Name:')}     ${ui.safe(name)}\n`);
   }
   if (email) {
-    process.stdout.write(`${ui.bold('User Email:')}    ${email}\n`);
+    process.stdout.write(`${ui.bold('User Email:')}    ${ui.safe(email)}\n`);
   }
   if (accountId) {
-    process.stdout.write(`${ui.bold('Account ID:')}    ${accountId}\n`);
+    process.stdout.write(`${ui.bold('Account ID:')}    ${ui.safe(accountId)}\n`);
   }
   if (authSession && authSession.expiresAt) {
-    process.stdout.write(`${ui.bold('Token Expires:')} ${authSession.expiresAt}\n`);
+    process.stdout.write(`${ui.bold('Token Expires:')} ${ui.safe(authSession.expiresAt)}\n`);
   }
 
   process.stdout.write(`${ui.bold('Config Path:')}   ${config.file}\n`);

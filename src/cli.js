@@ -143,7 +143,7 @@ ${ui.bold('Webhooks:')}
 ${ui.bold('Global flags:')}
   --json                Output raw JSON instead of formatted tables
   --api-key <key>       Use this API key for the run (overrides env + saved config)
-  --sandbox             Target the sandbox environment (api.mayar.club)
+  --sandbox             Target the sandbox environment (api.mayar.io)
   --production          Target the production environment (api.mayar.id)
   --env <value>         Target environment: sandbox or production
   --limit N             Page size (v2, default 10, max 50)
@@ -158,7 +158,9 @@ ${ui.bold('Environment:')}
   MAYAR_API_KEY         Used when --api-key is not given and no config is saved
   MAYAR_API_URL         Override API base URL
   MAYAR_AUTH_URL        Override auth server base URL (used by 'login')
-  NODE_ENV=development  Target the sandbox (api/auth .mayar.club) instead of production
+  MAYAR_TIMEOUT_MS      Request timeout in milliseconds (default 30000)
+  MAYAR_SANDBOX_LEGACY=1  Use the old sandbox domain (*.mayar.club). Deprecated.
+  NODE_ENV=development  Target the sandbox (api/auth .mayar.io) instead of production
 
 ${ui.dim('Resolution order: --api-key flag > MAYAR_API_KEY env > saved config.')}
 ${ui.dim('Endpoint: --sandbox/--production/--env > NODE_ENV=development > stored endpoint (default production).')}
@@ -210,7 +212,7 @@ async function ensureKey(flags) {
   if (cfg && cfg.auth && cfg.auth.authToken) return cfg.auth.authToken;
   ui.printBanner();
   const endpoint = await ui.selectEnvironment(flags);
-  const webUrl = endpoint === 'sandbox' ? 'https://web.mayar.club' : 'https://web.mayar.id';
+  const webUrl = config.webBaseUrl(endpoint);
   process.stdout.write('\n' + `${ui.bold('Welcome to Mayar CLI.')}\n`);
   process.stdout.write(`No API key found. Get yours from ${ui.cyan(webUrl)} → Integration → API Key.\n\n`);
   if (!process.stdin.isTTY) {
@@ -331,7 +333,8 @@ async function run(argv) {
     const ctx = { apiKey, flags, positional: [sub, ...rest].filter((x) => x !== undefined) };
     return await require(handler).run(ctx);
   } catch (err) {
-    process.stderr.write(ui.red('Error: ' + (err.message || String(err))) + '\n');
+    // Error text can carry server-controlled bytes, so clean it first.
+    process.stderr.write(ui.red('Error: ' + ui.safe(err.message || String(err))) + '\n');
     process.exit(1);
   }
 }

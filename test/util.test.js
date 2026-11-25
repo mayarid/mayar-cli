@@ -49,25 +49,23 @@ describe('checkResp', () => {
   test('message prefers body.messages over body.message', () => {
     assert.throws(
       () => checkResp({ status: 400, body: { messages: 'first', message: 'second' } }),
-      /API 400 — first/,
+      /Error: API request failed \(400\) — first/,
     );
   });
 
   test('message falls back to body.message when messages is absent', () => {
     assert.throws(
       () => checkResp({ status: 400, body: { message: 'bad request' } }),
-      /API 400 — bad request/,
+      /failed \(400\) — bad request/,
     );
   });
 
-  test('message falls back to res.raw when body has no message fields', () => {
-    assert.throws(
-      () => checkResp({ status: 500, body: {}, raw: 'raw text' }),
-      /API 500 — raw text/,
-    );
+  test('names the method and path when the request is known', () => {
+    const res = { status: 404, body: { messages: 'Not Found' }, request: { method: 'GET', path: '/hl/v2/invoices/x' } };
+    assert.throws(() => checkResp(res), /Error: GET \/hl\/v2\/invoices\/x failed \(404\) — Not Found/);
   });
 
-  test('message tolerates a missing body (empty message)', () => {
+  test('message tolerates a missing body', () => {
     let thrown;
     try {
       checkResp({ status: 500 });
@@ -77,7 +75,80 @@ describe('checkResp', () => {
     assert.ok(thrown instanceof Error);
     assert.equal(thrown.status, 500);
     assert.equal(thrown.body, undefined);
-    assert.equal(thrown.message, 'API 500 — ');
+    assert.match(thrown.message, /^API request failed \(500\) — server error/);
+  });
+
+  test('caps the message at 300 chars and the detail at 500', () => {
+    const res = { status: 400, body: { messages: 'm'.repeat(1000), errors: 'd'.repeat(1000) } };
+    let thrown;
+    try { checkResp(res); } catch (e) { thrown = e; }
+    const [first, second] = thrown.message.split('\n');
+    assert.ok(first.length < 340, `first line too long: ${first.length}`);
+    assert.ok(second.length <= 502 + 2, `detail too long: ${second.length}`);
+  });
+
+  test('does not print a non-JSON body (HTML page or stack trace)', () => {
+    const raw = '<html><body>TypeError: Cannot read properties of null at /srv/app.js:12</body></html>';
+    assert.throws(
+      () => checkResp({ status: 500, body: raw, raw }),
+      (e) => {
+        assert.match(e.message, /unexpected non-JSON response \(\d+ bytes\)/);
+        assert.doesNotMatch(e.message, /TypeError|\/srv\/app\.js/);
+        assert.match(e.message, /Hint: This is an error on the Mayar side/);
+        return true;
+      },
+    );
+  });
+
+  test('hides 5xx details (often a stack trace) unless MAYAR_DEBUG is set', () => {
+    const res = { status: 500, body: { messages: 'Internal', error: 'at Object.<anonymous> (/srv/x.js:1)' }, raw: 'RAW' };
+    assert.throws(() => checkResp(res), (e) => !/srv\/x\.js/.test(e.message));
+    process.env.MAYAR_DEBUG = '1';
+    try {
+      assert.throws(() => checkResp(res), /Raw response: RAW/);
+    } finally {
+      delete process.env.MAYAR_DEBUG;
+    }
+  });
+
+  test('401 with a JWT key names the host, the identity and the other environment', () => {
+    const res = {
+      status: 401, body: { messages: 'Unauthorized' },
+      request: {
+        method: 'GET', path: '/hl/v2/balances', host: 'api.mayar.id', endpoint: 'production',
+        keyIdentity: { email: 'shop@example.com', expiresAt: '2999-01-01T00:00:00.000Z' },
+      },
+    };
+    assert.throws(() => checkResp(res),
+      /Hint: api\.mayar\.id \(production\) rejected the key for shop@example\.com\. If it is a sandbox key, run again with --sandbox\./);
+  });
+
+  test('401 with an expired JWT says when it expired', () => {
+    const res = {
+      status: 401, body: {},
+      request: { method: 'GET', path: '/x', host: 'api.mayar.io', endpoint: 'sandbox', keyIdentity: { accountId: 'a1', expiresAt: '2020-01-01T00:00:00.000Z' } },
+    };
+    assert.throws(() => checkResp(res), /--production\. The key expired at 2020-01-01/);
+  });
+
+  test('401 with a non-JWT key says invalid or expired', () => {
+    const res = { status: 401, body: {}, request: { method: 'GET', path: '/x', host: 'api.mayar.id', endpoint: 'production', keyIdentity: null } };
+    assert.throws(() => checkResp(res), /Hint: The API key is invalid or expired\. .*web\.mayar\.id/);
+  });
+
+  test('429 after retries explains the give-up', () => {
+    const res = { status: 429, body: null, retries: 3, retryAfterMs: 12_000, rateLimit: { limit: 50, remaining: 0 } };
+    assert.throws(() => checkResp(res),
+      /failed \(429\) — rate limited\n {2}Hint: Gave up after 3 retries\. Try again in 12s\. Rate limit: \{"limit":50,"remaining":0\}/);
+  });
+
+  test('adds _rateLimit to a 2xx object body only when headers were sent', () => {
+    const body = { data: [] };
+    checkResp({ status: 200, body, rateLimit: { remaining: 49 } });
+    assert.deepEqual(body._rateLimit, { remaining: 49 });
+    const plain = { data: [] };
+    checkResp({ status: 200, body: plain, rateLimit: null });
+    assert.equal('_rateLimit' in plain, false);
   });
 });
 

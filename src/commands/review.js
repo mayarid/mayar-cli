@@ -26,8 +26,8 @@ function renderList(body) {
 
 function renderStats(body) {
   const d = (body && body.data) || {};
-  process.stdout.write(`${ui.bold('Total reviews:')}  ${d.total ?? 0}\n`);
-  process.stdout.write(`${ui.bold('Average rating:')} ${d.average ?? '—'}\n`);
+  process.stdout.write(`${ui.bold('Total reviews:')}  ${ui.safe(d.total ?? 0)}\n`);
+  process.stdout.write(`${ui.bold('Average rating:')} ${ui.safe(d.average ?? '—')}\n`);
   if (Array.isArray(d.stats) && d.stats.length) {
     process.stdout.write('\n');
     ui.table(

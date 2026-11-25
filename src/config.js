@@ -69,14 +69,47 @@ function isDev() {
   return resolveEndpoint() === 'sandbox';
 }
 
-function apiBaseUrl() {
-  if (process.env.MAYAR_API_URL) return process.env.MAYAR_API_URL;
-  return resolveEndpoint() === 'sandbox' ? 'https://api.mayar.club' : 'https://api.mayar.id';
+// Hosts per environment. The sandbox moved from *.mayar.club to *.mayar.io;
+// the old domain answers but does not work. It is reachable only when
+// MAYAR_SANDBOX_LEGACY=1 is set, and then a warning is printed.
+const HOSTS = {
+  production: { api: 'https://api.mayar.id', auth: 'https://auth.mayar.id', web: 'https://web.mayar.id' },
+  sandbox: { api: 'https://api.mayar.io', auth: 'https://auth.mayar.io', web: 'https://web.mayar.io' },
+  legacySandbox: { api: 'https://api.mayar.club', auth: 'https://auth.mayar.club', web: 'https://web.mayar.club' },
+};
+
+let legacyWarned = false;
+function warnLegacy(url) {
+  if (legacyWarned) return;
+  legacyWarned = true;
+  process.stderr.write(`Warning: ${url} is the old Mayar sandbox domain and is deprecated. ` +
+    'Use the sandbox at api.mayar.io (default for --sandbox).\n');
 }
 
-function authBaseUrl() {
-  if (process.env.MAYAR_AUTH_URL) return process.env.MAYAR_AUTH_URL;
-  return resolveEndpoint() === 'sandbox' ? 'https://auth.mayar.club' : 'https://auth.mayar.id';
+function hostsFor(endpoint) {
+  if (endpoint !== 'sandbox') return HOSTS.production;
+  return process.env.MAYAR_SANDBOX_LEGACY === '1' ? HOSTS.legacySandbox : HOSTS.sandbox;
 }
 
-module.exports = { load, save, clear, file, dir, isDev, apiBaseUrl, authBaseUrl, setRuntimeEndpoint, resolveEndpoint };
+function pick(override, kind) {
+  const url = override || hostsFor(resolveEndpoint())[kind];
+  let host = '';
+  try { host = new URL(url).hostname; } catch (_) { /* invalid override: let the request fail */ }
+  if (/(^|\.)mayar\.club$/i.test(host)) warnLegacy(url);
+  return url;
+}
+
+function apiBaseUrl() { return pick(process.env.MAYAR_API_URL, 'api'); }
+function authBaseUrl() { return pick(process.env.MAYAR_AUTH_URL, 'auth'); }
+
+// Dashboard URL (where users get API keys) for an endpoint name.
+function webBaseUrl(endpoint = resolveEndpoint()) { return hostsFor(endpoint).web; }
+
+function _resetLegacyWarning() { legacyWarned = false; }
+
+module.exports = {
+  load, save, clear, file, dir, isDev,
+  apiBaseUrl, authBaseUrl, webBaseUrl,
+  setRuntimeEndpoint, resolveEndpoint,
+  _resetLegacyWarning,
+};

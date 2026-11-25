@@ -1,4 +1,5 @@
 const readline = require('readline');
+const { stripControl, escapeJsonText } = require('./security');
 
 const isTTY = !!process.stdout.isTTY;
 const wrap = (n) => (s) => isTTY ? `\x1b[${n}m${s}\x1b[0m` : String(s);
@@ -73,8 +74,13 @@ function askSecret(question) {
   });
 }
 
+// Text from the API is untrusted. `safe` removes terminal escape and control
+// sequences before the text reaches the screen. Use it for every API value
+// that is printed outside `table` and `jsonOut`.
+const safe = (v) => stripControl(v);
+
 function jsonOut(obj) {
-  process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
+  process.stdout.write(escapeJsonText(JSON.stringify(obj, null, 2)) + '\n');
 }
 
 function table(rows, columns) {
@@ -82,15 +88,16 @@ function table(rows, columns) {
     process.stdout.write(dim('(no rows)') + '\n');
     return;
   }
+  const cell = (r, col) => stripControl(String(r[col] ?? '')).replace(/[\t\n]/g, ' ');
   const widths = columns.map((col) =>
-    Math.min(48, Math.max(col.length, ...rows.map((r) => String(r[col] ?? '').length))),
+    Math.min(48, Math.max(col.length, ...rows.map((r) => cell(r, col).length))),
   );
   const head = columns.map((col, i) => bold(col.padEnd(widths[i]))).join('  ');
   process.stdout.write(head + '\n');
   process.stdout.write(columns.map((_, i) => dim('─'.repeat(widths[i]))).join('  ') + '\n');
   for (const r of rows) {
     const line = columns.map((col, i) => {
-      let v = String(r[col] ?? '');
+      let v = cell(r, col);
       if (v.length > widths[i]) v = v.slice(0, widths[i] - 1) + '…';
       return v.padEnd(widths[i]);
     }).join('  ');
@@ -170,7 +177,7 @@ async function selectEnvironment(flags = {}) {
     process.stdout.write(bold('Select Environment:') + '\n');
     const environments = [
       { title: 'Production', value: 'production', description: 'Live environment (web.mayar.id / api.mayar.id)' },
-      { title: 'Sandbox', value: 'sandbox', description: 'Testing environment (web.mayar.club / api.mayar.club)' },
+      { title: 'Sandbox', value: 'sandbox', description: 'Testing environment (web.mayar.io / api.mayar.io)' },
     ];
     const selected = await pickFromList(environments, {
       displayKey: 'title',
@@ -187,6 +194,6 @@ async function selectEnvironment(flags = {}) {
 }
 
 module.exports = {
-  printBanner, ask, askSecret, jsonOut, table, pickFromList, selectEnvironment,
+  printBanner, ask, askSecret, jsonOut, table, pickFromList, selectEnvironment, safe,
   dim, bold, red, green, yellow, cyan, magenta,
 };

@@ -12,7 +12,7 @@ async function run({ apiKey, flags, positional }) {
     checkResp(res);
     if (flags.json) return ui.jsonOut(res.body);
     const d = (res.body && res.body.data) || {};
-    if (d.url) process.stdout.write(`${ui.bold('Static QRIS:')} ${ui.cyan(d.url)}\n`);
+    if (d.url) process.stdout.write(`${ui.bold('Static QRIS:')} ${ui.cyan(ui.safe(d.url))}\n`);
     else ui.jsonOut(res.body);
     return;
   }
@@ -41,8 +41,8 @@ async function run({ apiKey, flags, positional }) {
   checkResp(res);
   if (flags.json) return ui.jsonOut(res.body);
   const d = (res.body && res.body.data) || {};
-  process.stdout.write(`${ui.bold('QR amount:')} ${d.amount ?? amount}\n`);
-  if (d.url) process.stdout.write(`${ui.bold('QR image:')}  ${ui.cyan(d.url)}\n`);
+  process.stdout.write(`${ui.bold('QR amount:')} ${ui.safe(d.amount ?? amount)}\n`);
+  if (d.url) process.stdout.write(`${ui.bold('QR image:')}  ${ui.cyan(ui.safe(d.url))}\n`);
   else ui.jsonOut(res.body);
 }
 

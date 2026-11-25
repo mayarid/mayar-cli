@@ -1,8 +1,9 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, readData } = require('../util');
+const { checkResp, readData, confirmPlainText } = require('../util');
 
 const USAGE = 'Usage: mayar customer <list|create|search|update|magic-link>';
+const CUSTOMER_TEXT_FIELDS = ['name', 'email', 'mobile', 'address', 'description'];
 
 async function run({ apiKey, flags, positional }) {
   const [sub, ...rest] = positional;
@@ -21,6 +22,7 @@ async function run({ apiKey, flags, positional }) {
     case 'create': {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar customer create requires --data \'{"name":"...","email":"...","mobile":"..."}\'');
+      await confirmPlainText(body, CUSTOMER_TEXT_FIELDS);
       const res = await api.request('POST', '/hl/v2/customers/create', { apiKey, body });
       checkResp(res); ui.jsonOut(res.body); return;
     }
@@ -33,6 +35,7 @@ async function run({ apiKey, flags, positional }) {
     }
     case 'update': {
       if (rest.length < 2) throw new Error('Usage: mayar customer update <fromEmail> <toEmail>');
+      await confirmPlainText({ toEmail: rest[1] }, ['toEmail']);
       const res = await api.request('POST', '/hl/v2/customers/update', {
         apiKey, body: { fromEmail: rest[0], toEmail: rest[1] },
       });

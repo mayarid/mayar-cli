@@ -209,6 +209,8 @@ Webhooks
 Global flags
   --json                Output raw JSON instead of pretty tables
   --api-key <key>       Use this API key for the run (also accepts --api-key=KEY)
+  --sandbox             Target the sandbox (api.mayar.io)
+  --production          Target production (api.mayar.id, default)
   --limit N             Page size (default 10, max 50)
   --after CURSOR        Pagination cursor (from previous nextStartingAfter)
   --pageSize N          Alias for --limit
@@ -220,7 +222,9 @@ Environment
   MAYAR_API_KEY         Used when --api-key is absent and no config is saved
   MAYAR_API_URL         Override API base URL
   MAYAR_AUTH_URL        Override auth server base URL (used by 'login')
-  NODE_ENV=development  Target the sandbox (*.mayar.club) instead of production
+  MAYAR_TIMEOUT_MS      Request timeout in milliseconds (default 30000)
+  MAYAR_SANDBOX_LEGACY=1  Use the old sandbox domain (*.mayar.club). Deprecated.
+  NODE_ENV=development  Target the sandbox (*.mayar.io) instead of production
 ```
 
 ## Examples
@@ -409,7 +413,7 @@ Two traps worth remembering: `tiers` (plural) **lists** a product's tiers while 
 | Key      | Value                                                                                       |
 | -------- | ------------------------------------------------------------------------------------------- |
 | Path     | `$XDG_CONFIG_HOME/mayar/config.json`, defaulting to `~/.config/mayar/config.json` (chmod 600) |
-| Endpoint | `MAYAR_API_URL` env or `https://api.mayar.id` (default)                                    |
+| Endpoint | `MAYAR_API_URL` env, else `https://api.mayar.id` (production, default) or `https://api.mayar.io` (`--sandbox`) |
 
 Legacy installs that wrote to `~/.mayar/config.json` are migrated automatically on first run.
 
@@ -417,8 +421,33 @@ To rotate keys: `mayar config reset && mayar init`.
 
 ## Notes
 
-- All requests use `Authorization: Bearer <key>`. Errors print `API <status> — <message>` and exit non-zero.
+- All requests use `Authorization: Bearer <key>`. Errors print `<METHOD> <path> failed (<status>) — <message>`, with a `Hint:` line when there is a known fix, and exit non-zero. `MAYAR_DEBUG=1` adds the raw response.
+- Requests time out after 30 seconds (`MAYAR_TIMEOUT_MS`). On HTTP 429 the CLI retries up to 3 times with backoff and honours `Retry-After`. When Mayar sends `X-RateLimit-*` headers, `--json` output includes them as `_rateLimit`.
 - `--data @file.json` reads from disk; `--data '{...}'` reads inline JSON.
 - `MAYAR_API_URL` overrides the base URL — useful for staging or custom proxy environments.
 - `mayar whoami` decodes the JWT locally and verifies the key live against `/hl/v2/balances`.
 - **v1.0.0 migration**: all API paths moved from `/hl/v1/*` to `/hl/v2/*`. `--page` is no longer used (v2 has no page numbers); the cursor is returned as `nextStartingAfter` in each response and passed as `--after` for the next page.
+
+## Security
+
+The CLI adds these client-side checks. They protect you even when the API
+accepts the input.
+
+- **Webhook URLs.** `webhook register` and `webhook test` refuse a URL that is
+  not `http`/`https`, that has credentials in it, that uses a well-known
+  non-HTTP port (for example 22, 3306, 6379), or whose host is or resolves to a
+  loopback, private, link-local, cloud-metadata or reserved address. There is
+  no override: a webhook receiver must be public. Nothing is sent when a URL is
+  refused.
+- **Terminal output.** Text from the API is cleaned before it is printed, so a
+  stored value cannot send escape sequences to your terminal. `--json` output
+  escapes these characters and still parses to the same data.
+- **HTML in customer fields.** `customer create`, `customer update` and
+  `invoice create` check customer-facing text for HTML. In a terminal the CLI
+  asks before it sends; without a terminal (scripts, agents) it refuses.
+- **Errors.** Server errors (5xx) and non-JSON replies are summarised. Stack
+  traces and HTML error pages are not printed unless you set `MAYAR_DEBUG=1`.
+
+Some problems can only be fixed in the Mayar API itself, for example how the
+server stores and shows text, and its rate limits. The checks above reduce the
+risk from the CLI side. They do not replace fixes on the server.

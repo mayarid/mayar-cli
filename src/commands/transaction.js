@@ -68,9 +68,9 @@ async function run({ apiKey, flags, positional }) {
       checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       const d = (res.body && res.body.data) || {};
-      if (d.date)     process.stdout.write(`${ui.bold('Date:')}          ${d.date}\n`);
+      if (d.date)     process.stdout.write(`${ui.bold('Date:')}          ${ui.safe(d.date)}\n`);
       if (d.tpvCount != null) process.stdout.write(`${ui.bold('Total volume:')} ${Number(d.tpvCount).toLocaleString('id-ID')}\n`);
-      if (d.trxCount != null) process.stdout.write(`${ui.bold('Transactions:')} ${d.trxCount}\n`);
+      if (d.trxCount != null) process.stdout.write(`${ui.bold('Transactions:')} ${ui.safe(d.trxCount)}\n`);
       if (!d.date && d.tpvCount == null && d.trxCount == null) ui.jsonOut(res.body);
       return;
     }

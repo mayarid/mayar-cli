@@ -1,6 +1,14 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, readData, pagination, cursorFooter } = require('../util');
+const { checkResp, readData, pagination, cursorFooter, confirmPlainText } = require('../util');
+
+// Text an invoice shows to the customer: the top-level customer fields, an
+// optional nested customer object, and each line item's description.
+const INVOICE_TEXT_FIELDS = [
+  'name', 'email', 'mobile', 'description',
+  'customer.name', 'customer.email', 'customer.description',
+  'items.*.description',
+];
 
 const USAGE = 'Usage: mayar invoice <list|get|close|reopen|status|edit|filter|create>';
 const STATUS_ACTIONS = ['open', 'close', 'active', 'closed', 'unlisted'];
@@ -72,6 +80,7 @@ async function run({ apiKey, flags, positional }) {
     case 'create': {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar invoice create requires --data <json|@file>');
+      await confirmPlainText(body, INVOICE_TEXT_FIELDS);
       const res = await api.request('POST', '/hl/v2/invoices/create', { apiKey, body });
       checkResp(res); ui.jsonOut(res.body); return;
     }

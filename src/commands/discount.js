@@ -24,17 +24,26 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('POST', '/hl/v2/coupons/validate', {
         apiKey, body: { couponCode: rest[0], paymentLinkId: rest[1] },
       });
-      checkResp(res);
+      try {
+        checkResp(res);
+      } catch (err) {
+        // Mayar answers 500 (not 404) when the payment link does not exist.
+        if (err.status >= 500) {
+          err.message += `\n  Hint: Check that payment link ${rest[1]} exists ` +
+            '(`mayar product get <id>`). Mayar returns 500 instead of 404 for an unknown payment link.';
+        }
+        throw err;
+      }
       if (flags.json) return ui.jsonOut(res.body);
       const d = (res.body && res.body.data) || {};
       const c = d.coupon || {};
       const valid = d.valid ? ui.green('✓ valid') : ui.red('✗ invalid');
       process.stdout.write(`${ui.bold('Result:')}         ${valid}\n`);
-      if (c.code)          process.stdout.write(`${ui.bold('Code:')}           ${c.code}\n`);
-      if (c.discountType)  process.stdout.write(`${ui.bold('Discount type:')} ${c.discountType}\n`);
-      if (c.discountValue != null) process.stdout.write(`${ui.bold('Discount:')}       ${c.discountValue}${c.discountType === 'percentage' ? '%' : ''}\n`);
-      if (c.minimumPurchase != null) process.stdout.write(`${ui.bold('Min. purchase:')} ${c.minimumPurchase}\n`);
-      if (c.eligibleCustomerType) process.stdout.write(`${ui.bold('Eligible:')}       ${c.eligibleCustomerType}\n`);
+      if (c.code)          process.stdout.write(`${ui.bold('Code:')}           ${ui.safe(c.code)}\n`);
+      if (c.discountType)  process.stdout.write(`${ui.bold('Discount type:')} ${ui.safe(c.discountType)}\n`);
+      if (c.discountValue != null) process.stdout.write(`${ui.bold('Discount:')}       ${ui.safe(c.discountValue)}${c.discountType === 'percentage' ? '%' : ''}\n`);
+      if (c.minimumPurchase != null) process.stdout.write(`${ui.bold('Min. purchase:')} ${ui.safe(c.minimumPurchase)}\n`);
+      if (c.eligibleCustomerType) process.stdout.write(`${ui.bold('Eligible:')}       ${ui.safe(c.eligibleCustomerType)}\n`);
       return;
     }
     case 'check': {

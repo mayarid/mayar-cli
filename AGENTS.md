@@ -55,6 +55,12 @@ docs/research/        # research notes
   table with `ui.table`. Errors are `throw new Error(...)`; `src/cli.js` prints
   them to stderr and exits 1.
 - Usage errors throw `Usage: mayar <command> ...` messages.
+- API text is untrusted. `ui.table` and `ui.jsonOut` clean it already; wrap any
+  other printed API value in `ui.safe(...)`.
+- Security checks live in `src/security.js` (pure functions). Webhook URLs go
+  through `checkWebhookUrl`; customer-facing text goes through
+  `confirmPlainText` in `src/util.js`.
+- Decode JWTs only with `src/jwt.js`.
 
 ### Testing Conventions
 - Framework: `node:test` and `node:assert/strict`. No test dependencies.

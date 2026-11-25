@@ -1,5 +1,7 @@
 const fs = require('fs');
 const ui = require('./ui');
+const config = require('./config');
+const { findHtml } = require('./security');
 
 // Pull the field-level part of an error response out of the envelope. Mayar
 // puts the human summary in `messages`/`message` ("Validation Error") and the
@@ -15,14 +17,115 @@ function errorDetail(body, summary) {
   } catch (_) { return ''; }
 }
 
+const MAX_MESSAGE = 300;
+const MAX_DETAIL = 500;
+
+function cap(text, max) {
+  const s = String(text);
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
+function otherEndpoint(endpoint) {
+  return endpoint === 'sandbox' ? 'production' : 'sandbox';
+}
+
+// Explain a 401: name the host and the identity the key claims, so a key for
+// the other environment is easy to spot.
+function hint401(req) {
+  const web = config.webBaseUrl(req.endpoint);
+  const who = req.keyIdentity;
+  if (!who) {
+    return 'The API key is invalid or expired. Check it with `mayar whoami`, ' +
+      `or get a new key at ${web} → Integration → API Key.`;
+  }
+  const label = who.email || who.name || who.accountId || 'this account';
+  const other = otherEndpoint(req.endpoint);
+  let text = `${req.host} (${req.endpoint}) rejected the key for ${label}. ` +
+    `If it is a ${other} key, run again with --${other}.`;
+  if (who.expiresAt && Date.parse(who.expiresAt) < Date.now()) {
+    text += ` The key expired at ${who.expiresAt}.`;
+  } else {
+    text += ' Otherwise the key was revoked; get a new one at ' + web + '.';
+  }
+  return text;
+}
+
+function hint429(res) {
+  const parts = [`Gave up after ${res.retries || 0} retr${res.retries === 1 ? 'y' : 'ies'}.`];
+  if (res.retryAfterMs) parts.push(`Try again in ${Math.ceil(res.retryAfterMs / 1000)}s.`);
+  else parts.push('Wait a minute, then try again.');
+  if (res.rateLimit) parts.push(`Rate limit: ${JSON.stringify(res.rateLimit)}.`);
+  return parts.join(' ');
+}
+
+// Turn a failed reply into one error with this shape:
+//   <METHOD> <path> failed (<status>) — <message>
+//     <details, max 500 chars>
+//     Hint: <what to do>
+// MAYAR_DEBUG=1 adds the full raw body.
 function checkResp(res) {
-  if (res.status >= 200 && res.status < 300) return;
-  const msg = (res.body && (res.body.messages || res.body.message)) || res.raw || '';
-  const detail = process.env.MAYAR_DEBUG ? res.raw : errorDetail(res.body, msg);
-  const err = new Error(`API ${res.status} — ${msg}` + (detail ? `\n  ${detail}` : ''));
+  if (res.status >= 200 && res.status < 300) {
+    // Surface rate-limit headers in --json output, only when Mayar sends them.
+    if (res.rateLimit && res.body && typeof res.body === 'object' && !Array.isArray(res.body)) {
+      res.body._rateLimit = res.rateLimit;
+    }
+    return;
+  }
+
+  const req = res.request || null;
+  const where = req ? `${req.method} ${req.path}` : 'API request';
+  const isJson = res.body !== null && typeof res.body === 'object';
+  const serverError = res.status >= 500;
+
+  let msg = isJson ? (res.body.messages || res.body.message || '') : '';
+  if (typeof msg !== 'string') msg = JSON.stringify(msg);
+  if (!msg && typeof res.body === 'string' && res.body) {
+    // An HTML error page or a stack trace: do not print it.
+    msg = `unexpected non-JSON response (${Buffer.byteLength(res.raw || res.body)} bytes)`;
+  }
+  if (!msg && res.status === 429) msg = 'rate limited';
+  if (!msg && serverError) msg = 'server error';
+
+  const lines = [`${where} failed (${res.status})` + (msg ? ` — ${cap(msg, MAX_MESSAGE)}` : '')];
+
+  // Field-level detail. A 5xx detail is often a stack trace, so keep it for
+  // MAYAR_DEBUG only.
+  if (!serverError) {
+    const detail = errorDetail(isJson ? res.body : null, msg);
+    if (detail) lines.push(`  ${cap(detail, MAX_DETAIL)}`);
+  }
+
+  if (res.status === 401 && req) lines.push(`  Hint: ${hint401(req)}`);
+  else if (res.status === 429) lines.push(`  Hint: ${hint429(res)}`);
+  else if (serverError) {
+    lines.push('  Hint: This is an error on the Mayar side, not in your command. ' +
+      'Try again later. If it keeps failing, run with MAYAR_DEBUG=1 and report the output to Mayar.');
+  }
+
+  if (process.env.MAYAR_DEBUG && res.raw) lines.push(`  Raw response: ${res.raw}`);
+
+  const err = new Error(lines.join('\n'));
   err.status = res.status;
   err.body = res.body;
   throw err;
+}
+
+// Customer-facing text should be plain text. If any of `paths` in `body` looks
+// like HTML, ask before sending (TTY), or refuse (no TTY, for example an agent
+// or a script). Mayar stores the text as it is, and a page that shows it
+// without escaping would run it.
+async function confirmPlainText(body, paths, { isTTY = process.stdin.isTTY, ask = ui.ask } = {}) {
+  const hits = findHtml(body, paths);
+  if (!hits.length) return;
+  const fields = hits.join(', ');
+  if (!isTTY) {
+    throw new Error(`HTML-like content in ${fields}. Customer-facing fields must be plain text. ` +
+      'Nothing was sent. Remove the markup, or run the command in a terminal to confirm it.');
+  }
+  process.stderr.write(ui.yellow(`Warning: HTML-like content in ${fields}. ` +
+    'Customer-facing fields should be plain text.') + '\n');
+  const ans = await ask('Send anyway? [y/N] ');
+  if (!/^y/i.test(String(ans).trim())) throw new Error('Cancelled. Nothing was sent.');
 }
 
 function readData(value) {
@@ -73,4 +176,4 @@ function maybeJson(flags, body, fallback) {
   return false;
 }
 
-module.exports = { checkResp, readData, maybeJson, pagination, cursorFooter };
+module.exports = { checkResp, readData, maybeJson, pagination, cursorFooter, confirmPlainText };
