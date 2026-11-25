@@ -106,8 +106,10 @@ async function request(method, pathname, { apiKey, body, query } = {}) {
     }
   }
   const data = body ? Buffer.from(JSON.stringify(body)) : null;
+  // Accept a key pasted with its "Bearer " prefix.
+  const token = String(apiKey ?? '').trim().replace(/^bearer\s+/i, '');
   const headers = {
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${token}`,
     Accept: 'application/json',
     'User-Agent': `mayar-cli/${VERSION}`,
   };
@@ -140,7 +142,7 @@ async function request(method, pathname, { apiKey, body, query } = {}) {
     path: url.pathname,
     host: url.host,
     endpoint: config.resolveEndpoint(),
-    keyIdentity: identity(apiKey), // who the key claims to be; never the key itself
+    keyIdentity: identity(token), // who the key claims to be; never the key itself
   };
   return res;
 }

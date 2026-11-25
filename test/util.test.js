@@ -181,12 +181,17 @@ describe('readData', () => {
   });
 
   test('throws on malformed inline JSON', () => {
-    assert.throws(() => readData('{not json}'), SyntaxError);
+    assert.throws(() => readData('{not json}'), /Invalid JSON in --data: .*Pass inline JSON in single quotes/);
   });
 
   test('throws when an @file reference points at a missing file', () => {
     const missing = path.join(os.tmpdir(), 'readdata-does-not-exist-12345.json');
-    assert.throws(() => readData('@' + missing));
+    assert.throws(() => readData('@' + missing), /Cannot read --data file .*: ENOENT\./);
+  });
+
+  test('runs the guards on the parsed body', () => {
+    assert.throws(() => readData('{"amount":10.5}'), /amount must be a whole number above 0.*Nothing was sent/);
+    assert.throws(() => readData('{"expiredAt":"2001-01-01T00:00:00Z"}'), /expiredAt is in the past/);
   });
 });
 

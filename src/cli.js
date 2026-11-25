@@ -12,13 +12,13 @@ ${ui.bold('Setup:')}
   init                                Run first-time setup (or re-configure API key)
   login [--no-browser]                Sign in via browser (Google OAuth) and save auth token
   status                              Show active environment, user identity, and API key status
-  api-key <key>                       Save API key non-interactively
+  api-key <key> [--sandbox]           Save API key non-interactively (production unless --sandbox)
   config show                         Show config path and masked API key
   config reset                        Remove the saved API key
 
 ${ui.bold('Agent Skills:')}
-  skill install [--target <all|agents|claude|opencode|codex|cursor>] [--force]
-                                              Install Mayar SKILL.md into AI agent directories
+  skill install [--target <all|agents|claude|opencode|codex|cursor>] [--global]
+                                              Install the official Mayar skill (mayarid/skills, mayar-v2)
 
 ${ui.bold('Documentation:')}
   docs [topic] [--section S] [--limit N] [--compact] [--all] [--json] [--refresh]
@@ -162,11 +162,20 @@ ${ui.bold('Environment:')}
   MAYAR_SANDBOX_LEGACY=1  Use the old sandbox domain (*.mayar.club). Deprecated.
   NODE_ENV=development  Target the sandbox (api/auth .mayar.io) instead of production
 
-${ui.dim('Resolution order: --api-key flag > MAYAR_API_KEY env > saved config.')}
+${ui.dim('Credential order: --api-key flag > MAYAR_API_KEY env > saved API key > saved login token.')}
 ${ui.dim('Endpoint: --sandbox/--production/--env > NODE_ENV=development > stored endpoint (default production).')}
 ${ui.dim('Priority:  invocation flags → NODE_ENV → config.json → production (default)')}
 ${ui.dim('Config:   ~/.config/mayar/config.json (chmod 600)')}
 `;
+
+// Command-specific flags that take a value. They are parsed by the generic
+// `--name value` rule below. A flag that is not here and not handled above
+// gets a warning, because it silently takes the next argument as its value.
+const KNOWN_VALUE_FLAGS = new Set([
+  'customerId', 'email', 'endAt', 'fields', 'membershipTierId', 'paymentLinkId',
+  'prioritizeMessage', 'productId', 'rating', 'search', 'startAt', 'status',
+  'stock', 'target', 'tierId', 'type', 'urlDestination',
+]);
 
 function parseFlags(argv) {
   const flags = {};
@@ -182,6 +191,7 @@ function parseFlags(argv) {
     else if (a === '--section' || a === '--category') flags.section = argv[++i];
     else if (a === '--no-browser') flags['no-browser'] = true;
     else if (a === '--sandbox') flags.sandbox = true;
+    else if (a === '--global') flags.global = true;
     else if (a === '--production') flags.production = true;
     else if (a === '--api-key') flags.apiKey = argv[++i];
     else if (a.startsWith('--api-key=')) flags.apiKey = a.slice('--api-key='.length);
@@ -204,12 +214,21 @@ function parseFlags(argv) {
   return { flags, positional };
 }
 
+// Flag keys set by the explicit rules in parseFlags.
+const BUILTIN_FLAG_KEYS = new Set([
+  'json', 'force', 'refresh', 'compact', 'all', 'section', 'no-browser', 'sandbox', 'global',
+  'production', 'apiKey', 'page', 'pageSize', 'limit', 'after', 'data', 'env', 'help', 'version',
+]);
+
+function unknownFlags(flags) {
+  return Object.keys(flags)
+    .filter((k) => !BUILTIN_FLAG_KEYS.has(k) && !KNOWN_VALUE_FLAGS.has(k))
+    .map((name) => ({ name, value: flags[name] }));
+}
+
 async function ensureKey(flags) {
-  if (flags.apiKey) return flags.apiKey;
-  if (process.env.MAYAR_API_KEY) return process.env.MAYAR_API_KEY;
-  const cfg = config.load();
-  if (cfg && cfg.apiKey) return cfg.apiKey;
-  if (cfg && cfg.auth && cfg.auth.authToken) return cfg.auth.authToken;
+  const cred = config.resolveCredential(flags);
+  if (cred) return cred.value;
   ui.printBanner();
   const endpoint = await ui.selectEnvironment(flags);
   const webUrl = config.webBaseUrl(endpoint);
@@ -228,6 +247,10 @@ async function ensureKey(flags) {
 
 async function run(argv) {
   const { flags, positional } = parseFlags(argv);
+  for (const u of unknownFlags(flags)) {
+    const took = u.value === undefined ? 'no value' : `"${ui.safe(u.value)}" as its value`;
+    process.stderr.write(ui.yellow(`Warning: unknown flag --${ui.safe(u.name)} (took ${took}). Check the spelling with --help.`) + '\n');
+  }
 
   // Resolve endpoint override from flags
   if (flags.sandbox && flags.production) {
@@ -258,8 +281,9 @@ async function run(argv) {
     if (cmd === 'login') { return await require('./commands/login').run({ flags }); }
     if (cmd === 'status') { return await require('./commands/status').run({ flags }); }
     if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
+    if (cmd === 'skill' || cmd === 'skills') { return await require('./commands/skill').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
     if (cmd === 'api-key' || cmd === 'apikey') {
-      return await require('./commands/apikey').run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
+      return await require('./commands/apikey').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) });
     }
     if (cmd === 'config') {
       if (sub === 'show') {
@@ -315,7 +339,6 @@ async function run(argv) {
       credit:       './commands/credit',
       credits:      './commands/credit',
       saas:         './commands/saas',
-      skill:        './commands/skill',
       software:     './commands/software',
       'payment-link':  './commands/payment-link',
       paymentlink:     './commands/payment-link',
@@ -339,4 +362,4 @@ async function run(argv) {
   }
 }
 
-module.exports = { run, parseFlags };
+module.exports = { run, parseFlags, unknownFlags };

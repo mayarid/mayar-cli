@@ -14,8 +14,9 @@ async function run({ flags }) {
   const apiBaseUrl = config.apiBaseUrl();
   const authBaseUrl = config.authBaseUrl();
 
-  // Resolve API Key from flags, env, or config
-  const apiKey = flags.apiKey || process.env.MAYAR_API_KEY || cfg.apiKey || null;
+  // Same credential order as every other command.
+  const cred = config.resolveCredential(flags, cfg);
+  const apiKey = cred ? cred.value : null;
   const maskedApiKey = maskKey(apiKey);
 
   // Decode JWT if apiKey is a JWT
@@ -52,6 +53,7 @@ async function run({ flags }) {
       authBaseUrl,
       apiKey: maskedApiKey,
       hasApiKey: !!apiKey,
+      credentialSource: cred ? cred.source : null,
       user: {
         name,
         email,
@@ -74,7 +76,7 @@ async function run({ flags }) {
   process.stdout.write(`${ui.bold('Environment:')}   ${endpoint} ${ui.dim('(' + apiBaseUrl + ')')}\n`);
   process.stdout.write(`${ui.bold('Auth Server:')}   ${authBaseUrl}\n`);
   process.stdout.write(
-    `${ui.bold('API Key:')}       ${maskedApiKey ? maskedApiKey + ui.green(' (configured)') : ui.dim('(not configured)')}\n`,
+    `${ui.bold('Credential:')}    ${maskedApiKey ? maskedApiKey + ui.green(` (${cred.source})`) : ui.dim('(not configured)')}\n`,
   );
 
   if (name) {

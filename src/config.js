@@ -32,7 +32,9 @@ function load() {
 
 function save(data) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  // Create the file as 0600, so it is never readable by others, not even for
+  // a moment. chmod still runs, for a file that existed with a wider mode.
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 });
   try { fs.chmodSync(file, 0o600); } catch (_) {}
 }
 
@@ -62,7 +64,14 @@ function resolveEndpoint() {
   if (_runtimeEndpoint !== null) return _runtimeEndpoint;
   if (process.env.NODE_ENV === 'development') return 'sandbox';
   const cfg = load();
-  return cfg?.endpoint || 'production';
+  const stored = cfg?.endpoint;
+  if (stored === undefined || stored === null || stored === '') return 'production';
+  // A typo such as "sandbx" must not fall back to production silently.
+  if (stored !== 'sandbox' && stored !== 'production') {
+    throw new Error(`Invalid endpoint "${stored}" in ${file}. ` +
+      "Use 'sandbox' or 'production', pass --sandbox/--production, or run `mayar config reset`.");
+  }
+  return stored;
 }
 
 function isDev() {
@@ -107,9 +116,21 @@ function webBaseUrl(endpoint = resolveEndpoint()) { return hostsFor(endpoint).we
 
 function _resetLegacyWarning() { legacyWarned = false; }
 
+// Credential order, the same for every command (see GLOSSARY.md):
+//   --api-key  >  MAYAR_API_KEY  >  saved API key  >  saved login token
+// An explicit API key always wins over a login token. Returns
+// { value, source } or null.
+function resolveCredential(flags = {}, cfg = load()) {
+  if (flags.apiKey) return { value: flags.apiKey, source: '--api-key' };
+  if (process.env.MAYAR_API_KEY) return { value: process.env.MAYAR_API_KEY, source: 'MAYAR_API_KEY' };
+  if (cfg && cfg.apiKey) return { value: cfg.apiKey, source: 'saved API key' };
+  if (cfg && cfg.auth && cfg.auth.authToken) return { value: cfg.auth.authToken, source: 'login token' };
+  return null;
+}
+
 module.exports = {
   load, save, clear, file, dir, isDev,
   apiBaseUrl, authBaseUrl, webBaseUrl,
-  setRuntimeEndpoint, resolveEndpoint,
+  setRuntimeEndpoint, resolveEndpoint, resolveCredential,
   _resetLegacyWarning,
 };

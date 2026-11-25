@@ -1,6 +1,7 @@
 const api = require('../api');
 const ui = require('../ui');
 const { decodeJwt, identity } = require('../jwt');
+const { isRejected } = require('../util');
 
 const VERIFY_PATH = '/hl/v1/balance';
 
@@ -10,7 +11,7 @@ async function run({ apiKey, flags }) {
   const who = identity(apiKey);
   const endpoint = api.baseUrl();
   const res = await api.request('GET', VERIFY_PATH, { apiKey });
-  const valid = res.status >= 200 && res.status < 300;
+  const valid = res.status >= 200 && res.status < 300 && !isRejected(res);
 
   if (flags.json) {
     ui.jsonOut({

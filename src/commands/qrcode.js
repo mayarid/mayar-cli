@@ -1,6 +1,7 @@
 const api = require('../api');
 const ui = require('../ui');
 const { checkResp } = require('../util');
+const { checkAmount } = require('../guards');
 
 const USAGE = 'Usage: mayar qrcode <amount> | mayar qrcode static | mayar qrcode channels';
 
@@ -35,8 +36,7 @@ async function run({ apiKey, flags, positional }) {
   }
 
   if (!first) throw new Error(USAGE);
-  const amount = Number(first);
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error(USAGE);
+  const amount = checkAmount(first);
   const res = await api.request('POST', '/hl/v2/qr-codes/create', { apiKey, body: { amount } });
   checkResp(res);
   if (flags.json) return ui.jsonOut(res.body);

@@ -1,6 +1,7 @@
 const api = require('../api');
 const ui = require('../ui');
 const { checkResp, readData, pagination, cursorFooter } = require('../util');
+const { checkLimit } = require('../guards');
 
 const USAGE = 'Usage: mayar product <list|search|type|get|close|reopen|status|transactions|create|edit|sort>';
 const SORT_TYPES = ['generic_link', 'event', 'webinar', 'digital_product'];
@@ -121,7 +122,7 @@ async function run({ apiKey, flags, positional }) {
       // which uses camelCase `startingAfter`). Build the query directly rather than via
       // pagination() to preserve the exact wire name.
       const query = {};
-      const limit = flags.limit ?? flags.pageSize;
+      const limit = checkLimit(flags.limit ?? flags.pageSize);
       const after = flags.after ?? flags.startingAfter ?? flags['starting-after'];
       if (limit) query.limit = limit;
       if (after) query.starting_after = after;

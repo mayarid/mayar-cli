@@ -19,6 +19,31 @@ All notable changes to `mayar` (mayar-cli) are listed here. The format follows
   other environment. 5xx and non-JSON replies no longer print stack traces or
   HTML pages (use `MAYAR_DEBUG=1`).
 
+- **A rejected response now fails.** When Mayar answers HTTP 2xx but the body
+  says the request failed (`statusCode` 4xx/5xx, `success:false`,
+  `status:false`, an error key, or a failure message), the CLI prints
+  `... failed (<status>) — Mayar rejected the request: <message>` and exits 1.
+  Before, it printed the body and exited 0.
+- **Guards** refuse input before anything is sent: money fields (`amount`,
+  `price`, `rate`, also nested) must be whole numbers above 0; `expiredAt` must
+  not be in the past; `--limit` must be 1–50; `qrcode <amount>` must be a whole
+  number. Bad `--data` JSON or a missing `@file` gives a clear message.
+- **One credential order for every command:** `--api-key`, `MAYAR_API_KEY`,
+  saved API key, saved login token. `balance` used the login token first, and
+  `status` ignored it. `status` now shows which credential is in use.
+- `mayar api-key <key> --sandbox` saves the key as a sandbox key (it always
+  saved production).
+- `mayar skill install` now runs the official installer
+  (`npx skills add mayarid/skills --skill mayar-v2`) with `--target` and the
+  new `--global`. It no longer asks for an API key. `--force` is no longer
+  needed.
+- An invalid `endpoint` in the config file is refused instead of silently
+  becoming production.
+- An unknown flag (for example `--jsno`) prints a warning, because it takes the
+  next argument as its value.
+- A key pasted with a `Bearer ` prefix works.
+- The config file is created with mode 0600 from the start.
+
 ### Security
 
 - `webhook register` and `webhook test` refuse non-http(s), private, loopback,

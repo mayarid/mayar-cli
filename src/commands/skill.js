@@ -1,186 +1,97 @@
-const https = require('https');
-const fs = require('fs');
-const path = require('path');
+const { spawn } = require('child_process');
 const ui = require('../ui');
 
-const SKILL_URL =
-  'https://raw.githubusercontent.com/mayarid/mayar-cli/refs/heads/main/SKILL.md';
+// The official Mayar skill lives in mayarid/skills and has its own installer
+// (`npx skills add`). This command runs that installer, so there is only one
+// skill to keep up to date. See docs/adr/0002-official-skill-lives-in-mayarid-skills.md.
 
-const VALID_TARGETS = new Set([
-  'all',
-  'agents',
-  'claude',
-  'opencode',
-  'codex',
-  'cursor',
-]);
+const SKILL_REPO = 'mayarid/skills';
+const SKILL_NAME = 'mayar-v2';
 
-const TARGET_PATHS = {
-  agents: '.agents/skills/mayar/SKILL.md',
-  claude: '.claude/skills/mayar/SKILL.md',
-  opencode: '.opencode/skills/mayar/SKILL.md',
-  codex: '.codex/skills/mayar/SKILL.md',
-  cursor: '.cursor/rules/mayar.mdc',
+// --target values, mapped to `skills add --agent` names.
+const TARGET_AGENTS = {
+  claude: ['claude-code'],
+  codex: ['codex'],
+  cursor: ['cursor'],
+  opencode: ['opencode'],
+  agents: ['codex'], // .agents/skills/ in the project
+  all: ['claude-code', 'codex', 'cursor', 'opencode'],
 };
 
 function usage() {
-  process.stdout.write(`${ui.bold('mayar skill install')}  ${ui.dim('— install SKILL.md to AI agent directories')}
+  process.stdout.write(`${ui.bold('mayar skill install')}  ${ui.dim(`— install the official Mayar agent skill (${SKILL_NAME})`)}
 
 ${ui.bold('Usage:')}
   mayar skill install [flags]
 
 ${ui.bold('Flags:')}
-  --target <name>   Install to a specific target (default: all)
-                    Valid: all, agents, claude, opencode, codex, cursor
-  --force           Overwrite existing files
-  --json            Output JSON
+  --target <name>   Agent to install for (default: all)
+                    Valid: ${Object.keys(TARGET_AGENTS).join(', ')}
+  --global          Install for your user, not only this project
+  --json            Print the result as JSON
+
+Runs: npx -y skills add ${SKILL_REPO} --skill ${SKILL_NAME} -y -a <agent> [-g]
+Needs npx (comes with Node.js) and network access.
 `);
 }
 
-function generateCursorMdc(skillContent) {
-  let body = skillContent;
-  const lines = body.split('\n');
-
-  // Strip the SKILL.md's own YAML frontmatter between `---` delimiters.
-  if (lines[0].trim() === '---') {
-    for (let i = 1; i < lines.length; i++) {
-      if (lines[i].trim() === '---') {
-        body = lines.slice(i + 1).join('\n');
-        break;
-      }
-    }
+// Build the npx arguments. Pure, for tests.
+function installArgs({ target = 'all', global = false } = {}) {
+  const agents = TARGET_AGENTS[target];
+  if (!agents) {
+    throw new Error(`Invalid --target "${target}". Valid: ${Object.keys(TARGET_AGENTS).join(', ')}`);
   }
-
-  const frontmatter = `---
-alwaysApply: true
-description: Mayar API & CLI integration skill. For App Integration, use \`mayar docs <topic>\` to read REST API specs and write native HTTP (fetch/axios) in app code. For Direct Shell Tasks & Admin Operations, execute Mayar CLI commands directly (\`mayar balance\`, \`mayar invoice list\`, etc.).
-globs:
-  - "**/*"
----
-`;
-
-  return frontmatter + '\n' + body.trim() + '\n';
+  return [
+    '-y', 'skills', 'add', SKILL_REPO,
+    '--skill', SKILL_NAME,
+    '-y',
+    ...agents.flatMap((a) => ['-a', a]),
+    ...(global ? ['-g'] : []),
+  ];
 }
 
-/**
- * Fetch SKILL.md from the GitHub raw URL.
- * Follows 301/302 redirects up to 3 hops.
- */
-function fetchSkill() {
+function runNpx(args, { capture }) {
   return new Promise((resolve, reject) => {
-    function doFetch(url, redirects) {
-      https
-        .get(url, (res) => {
-          // Follow redirects
-          if (
-            res.statusCode >= 300 &&
-            res.statusCode < 400 &&
-            res.headers.location
-          ) {
-            if (redirects >= 3) {
-              res.resume();
-              reject(new Error('Too many redirects'));
-              return;
-            }
-            const nextUrl = new URL(res.headers.location, url).href;
-            res.resume();
-            doFetch(nextUrl, redirects + 1);
-            return;
-          }
-
-          if (res.statusCode !== 200) {
-            res.resume();
-            reject(new Error(`HTTP ${res.statusCode}`));
-            return;
-          }
-
-          let data = '';
-          res.setEncoding('utf8');
-          res.on('data', (chunk) => {
-            data += chunk;
-          });
-          res.on('end', () => resolve(data));
-          res.on('error', reject);
-        })
-        .on('error', reject);
+    const child = spawn('npx', args, {
+      stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+      shell: process.platform === 'win32',
+    });
+    let out = '';
+    if (capture) {
+      child.stdout.on('data', (c) => { out += c; });
+      child.stderr.on('data', (c) => { out += c; });
     }
-
-    doFetch(SKILL_URL, 0);
+    child.on('error', (err) => {
+      reject(new Error(err.code === 'ENOENT'
+        ? 'npx was not found. Install Node.js (npx comes with it), then run again.'
+        : `Could not start npx: ${err.message}`));
+    });
+    child.on('close', (code) => resolve({ code, output: out }));
   });
 }
 
-async function run(ctx) {
-  const { flags, positional } = ctx;
+async function run({ flags, positional }, { exec = runNpx } = {}) {
   const [sub] = positional;
-
-  if (!sub || sub === 'help') {
-    usage();
-    return;
-  }
-
-  if (sub !== 'install') {
-    process.stderr.write(
-      ui.red(`Unknown subcommand: mayar skill ${sub}`) + '\n',
-    );
-    process.exit(1);
+  if (flags.help || !sub) { usage(); return; }
+  if (sub !== 'install') throw new Error('Usage: mayar skill install [--target <name>] [--global]');
+  if (flags.force) {
+    process.stderr.write(ui.dim('Note: --force is no longer needed; the installer replaces the skill.') + '\n');
   }
 
   const target = flags.target || 'all';
-  if (!VALID_TARGETS.has(target)) {
-    process.stderr.write(
-      ui.red(
-        `Error: Invalid --target value: ${target}. Valid values: all, agents, claude, opencode, codex, cursor`,
-      ) + '\n',
-    );
-    process.exit(1);
-  }
+  const global = Boolean(flags.global);
+  const args = installArgs({ target, global });
+  const command = `npx ${args.join(' ')}`;
+  if (!flags.json) process.stdout.write(ui.dim(`Running: ${command}`) + '\n');
 
-  let content;
-  try {
-    content = await fetchSkill();
-  } catch (err) {
-    process.stderr.write(
-      ui.red(`Error: Failed to fetch SKILL.md: ${err.message}`) + '\n',
-    );
-    process.exit(1);
-  }
-
-  const targets =
-    target === 'all'
-      ? ['agents', 'claude', 'opencode', 'codex', 'cursor']
-      : [target];
-
-  const results = [];
-
-  for (const t of targets) {
-    const relPath = TARGET_PATHS[t];
-    const filePath = path.resolve(relPath);
-    const dir = path.dirname(filePath);
-
-    fs.mkdirSync(dir, { recursive: true });
-
-    const fileContent = t === 'cursor' ? generateCursorMdc(content) : content;
-
-    if (fs.existsSync(filePath) && !flags.force) {
-      if (!flags.json) {
-        process.stdout.write(
-          `Skipping: ${relPath} (use --force to overwrite)\n`,
-        );
-      }
-      results.push({ target: t, path: filePath, status: 'skipped' });
-    } else {
-      fs.writeFileSync(filePath, fileContent);
-      if (!flags.json) {
-        const label = t === 'cursor' ? 'Installed (Cursor .mdc)' : 'Installed';
-        process.stdout.write(`${label}: ${relPath}\n`);
-      }
-      results.push({ target: t, path: filePath, status: 'installed' });
-    }
-  }
-
+  const { code, output } = await exec(args, { capture: Boolean(flags.json) });
   if (flags.json) {
-    ui.jsonOut(results);
+    ui.jsonOut({ ok: code === 0, skill: `${SKILL_REPO}/${SKILL_NAME}`, target, global, command, exitCode: code, output: output.trim() });
+    if (code !== 0) process.exitCode = 1;
+    return;
   }
+  if (code !== 0) throw new Error(`The skills installer failed (exit code ${code}). Command: ${command}`);
+  process.stdout.write(ui.green(`✓ Installed ${SKILL_NAME} from ${SKILL_REPO}`) + '\n');
 }
 
-module.exports = { run };
+module.exports = { run, installArgs, TARGET_AGENTS };

@@ -43,7 +43,7 @@ mayar login
 
 Opens your browser for Google OAuth sign-in and saves the auth token automatically — no copy-pasting keys. Use `mayar login --no-browser` on headless machines to get a URL to open elsewhere.
 
-Alternatives (resolution order: `--api-key` flag → `MAYAR_API_KEY` env → saved config file):
+Credential order, the same for every command: `--api-key` flag → `MAYAR_API_KEY` env → saved API key → saved login token. An explicit API key always wins over a login token; `mayar status` shows which one is in use. Alternatives to `login`:
 
 **Option 1 — environment variable (recommended for CI/agents):**
 
@@ -67,7 +67,8 @@ mayar balance
 **Option 3 — non-interactive setup:**
 
 ```bash
-mayar api-key YOUR_KEY_HERE
+mayar api-key YOUR_KEY_HERE              # production key
+mayar api-key YOUR_SANDBOX_KEY --sandbox # sandbox key (api.mayar.io)
 ```
 
 **Option 4 — per-command override:**
@@ -86,7 +87,8 @@ Get your API key from [web.mayar.id](https://web.mayar.id) → Integration → A
 Setup
   init                                  First-time setup (interactive, masked input)
   login [--no-browser]                  Sign in via Google OAuth
-  api-key <key>                         Save API key non-interactively
+  api-key <key> [--sandbox]             Save API key non-interactively
+  skill install [--target T] [--global] Install the official Mayar agent skill (mayarid/skills)
   config show|reset                     Inspect or remove the saved config
 
 Account

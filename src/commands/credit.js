@@ -1,6 +1,7 @@
 const api = require('../api');
 const ui = require('../ui');
 const { checkResp, readData } = require('../util');
+const { checkLimit } = require('../guards');
 
 const USAGE = 'Usage: mayar credit <balance|add|spend|history|register-usage|register-membership|checkout>';
 
@@ -40,7 +41,7 @@ async function run({ apiKey, flags, positional }) {
         query: {
           productId: flags.productId,
           page: flags.page,
-          limit: flags.limit,
+          limit: checkLimit(flags.limit),
         },
       });
       checkResp(res); ui.jsonOut(res.body); return;

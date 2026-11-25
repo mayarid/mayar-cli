@@ -131,6 +131,13 @@ describe('api.request over a local server', () => {
     assert.equal(res.request.endpoint, 'production');
   });
 
+  test('removes a pasted "Bearer " prefix from the key', async () => {
+    let auth;
+    handler = (req, res) => { auth = req.headers.authorization; res.writeHead(200); res.end('{}'); };
+    await api.request('GET', '/x', { apiKey: '  Bearer abc.def.ghi ' });
+    assert.equal(auth, 'Bearer abc.def.ghi');
+  });
+
   test('keeps the key identity, never the key, on the response', async () => {
     handler = (req, res) => { res.writeHead(401); res.end('{}'); };
     const key = makeJwt({ email: 'who@example.com' });

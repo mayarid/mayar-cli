@@ -2,6 +2,7 @@ const fs = require('fs');
 const ui = require('./ui');
 const config = require('./config');
 const { findHtml } = require('./security');
+const { checkData, checkLimit } = require('./guards');
 
 // Pull the field-level part of an error response out of the envelope. Mayar
 // puts the human summary in `messages`/`message` ("Validation Error") and the
@@ -58,45 +59,94 @@ function hint429(res) {
   return parts.join(' ');
 }
 
+// --- Rejected responses -----------------------------------------------------
+// Mayar sometimes answers HTTP 2xx with a body that says the request failed
+// (a "rejected response", see GLOSSARY.md). The rules follow mayar-mcp
+// (src/utils/apiClient.ts), which found these shapes in sandbox QA.
+
+const isRecord = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+function mayarMessage(body) {
+  if (!isRecord(body)) return undefined;
+  const m = body.messages ?? body.message;
+  return typeof m === 'string' && m.trim() ? m : undefined;
+}
+
+// statusCode 4xx/5xx inside a 2xx body.
+function envelopeErrorStatus(body) {
+  if (!isRecord(body)) return undefined;
+  const code = Number(body.statusCode);
+  return Number.isInteger(code) && code >= 400 && code <= 599 ? code : undefined;
+}
+
+const FAILURE_TEXT = /\b(required|invalid|must|not found|failed|error|forbidden|unauthori[sz]ed|tidak|wajib|gagal|belum)\b/i;
+const FAILURE_LEAD = /^\s*(fail(ed|ure)?|gagal|error)\b/i;
+
+// success:false or status:false; or, with no data, an error key or a failure
+// message; or, with data, a message that opens with a failure word. So
+// "success" or "Data not found" next to data stays a success.
+function isFailureBody(body) {
+  if (!isRecord(body)) return false;
+  if (body.success === false || body.status === false) return true;
+  if (body.data !== undefined && body.data !== null) {
+    const m = mayarMessage(body);
+    return m !== undefined && FAILURE_LEAD.test(m);
+  }
+  if ([body.error, body.errors].some((e) => e !== undefined && e !== null && e !== '' && e !== false)) return true;
+  const m = mayarMessage(body);
+  return m !== undefined && FAILURE_TEXT.test(m);
+}
+
+// True when a 2xx reply is really a failure.
+function isRejected(res) {
+  if (!(res.status >= 200 && res.status < 300)) return false;
+  return envelopeErrorStatus(res.body) !== undefined || isFailureBody(res.body);
+}
+
 // Turn a failed reply into one error with this shape:
 //   <METHOD> <path> failed (<status>) — <message>
 //     <details, max 500 chars>
 //     Hint: <what to do>
-// MAYAR_DEBUG=1 adds the full raw body.
+// A rejected response uses the same shape, with "Mayar rejected the request"
+// as the message. MAYAR_DEBUG=1 adds the full raw body.
 function checkResp(res) {
-  if (res.status >= 200 && res.status < 300) {
+  const ok = res.status >= 200 && res.status < 300;
+  if (ok && !isRejected(res)) {
     // Surface rate-limit headers in --json output, only when Mayar sends them.
-    if (res.rateLimit && res.body && typeof res.body === 'object' && !Array.isArray(res.body)) {
-      res.body._rateLimit = res.rateLimit;
-    }
+    if (res.rateLimit && isRecord(res.body)) res.body._rateLimit = res.rateLimit;
     return;
   }
+  const rejected = ok;
+  const status = rejected ? (envelopeErrorStatus(res.body) ?? res.status) : res.status;
 
   const req = res.request || null;
   const where = req ? `${req.method} ${req.path}` : 'API request';
   const isJson = res.body !== null && typeof res.body === 'object';
-  const serverError = res.status >= 500;
+  const serverError = status >= 500;
 
   let msg = isJson ? (res.body.messages || res.body.message || '') : '';
   if (typeof msg !== 'string') msg = JSON.stringify(msg);
+  if (!msg && rejected && typeof res.body?.error === 'string') msg = res.body.error;
   if (!msg && typeof res.body === 'string' && res.body) {
     // An HTML error page or a stack trace: do not print it.
     msg = `unexpected non-JSON response (${Buffer.byteLength(res.raw || res.body)} bytes)`;
   }
-  if (!msg && res.status === 429) msg = 'rate limited';
+  if (!msg && status === 429) msg = 'rate limited';
   if (!msg && serverError) msg = 'server error';
+  const summary = msg;
+  if (rejected) msg = 'Mayar rejected the request' + (msg ? `: ${msg}` : '');
 
-  const lines = [`${where} failed (${res.status})` + (msg ? ` — ${cap(msg, MAX_MESSAGE)}` : '')];
+  const lines = [`${where} failed (${status})` + (msg ? ` — ${cap(msg, MAX_MESSAGE)}` : '')];
 
   // Field-level detail. A 5xx detail is often a stack trace, so keep it for
   // MAYAR_DEBUG only.
   if (!serverError) {
-    const detail = errorDetail(isJson ? res.body : null, msg);
+    const detail = errorDetail(isJson ? res.body : null, summary);
     if (detail) lines.push(`  ${cap(detail, MAX_DETAIL)}`);
   }
 
-  if (res.status === 401 && req) lines.push(`  Hint: ${hint401(req)}`);
-  else if (res.status === 429) lines.push(`  Hint: ${hint429(res)}`);
+  if (status === 401 && req) lines.push(`  Hint: ${hint401(req)}`);
+  else if (status === 429) lines.push(`  Hint: ${hint429(res)}`);
   else if (serverError) {
     lines.push('  Hint: This is an error on the Mayar side, not in your command. ' +
       'Try again later. If it keeps failing, run with MAYAR_DEBUG=1 and report the output to Mayar.');
@@ -105,7 +155,9 @@ function checkResp(res) {
   if (process.env.MAYAR_DEBUG && res.raw) lines.push(`  Raw response: ${res.raw}`);
 
   const err = new Error(lines.join('\n'));
-  err.status = res.status;
+  err.status = status;
+  err.httpStatus = res.status;
+  err.rejected = rejected;
   err.body = res.body;
   throw err;
 }
@@ -128,13 +180,29 @@ async function confirmPlainText(body, paths, { isTTY = process.stdin.isTTY, ask 
   if (!/^y/i.test(String(ans).trim())) throw new Error('Cancelled. Nothing was sent.');
 }
 
+const DATA_USAGE = 'Pass inline JSON in single quotes (--data \'{"name":"x"}\') or a file (--data @payload.json).';
+
+// Parse --data (inline JSON or @file), then run the guards on it.
 function readData(value) {
   if (!value) return undefined;
+  let text = value;
+  let source = '--data';
   if (value.startsWith('@')) {
-    const content = fs.readFileSync(value.slice(1), 'utf8');
-    return JSON.parse(content);
+    const file = value.slice(1);
+    source = `--data file ${file}`;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch (err) {
+      throw new Error(`Cannot read ${source}: ${err.code || err.message}. ${DATA_USAGE}`);
+    }
   }
-  return JSON.parse(value);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Invalid JSON in ${source}: ${err.message}. ${DATA_USAGE}`);
+  }
+  return checkData(body);
 }
 
 // Build a v2 cursor pagination query from flags.
@@ -142,9 +210,9 @@ function readData(value) {
 // --after is the short form of --starting-after.
 function pagination(flags, extra) {
   const q = { ...(extra || {}) };
-  const limit = flags.limit ?? flags.pageSize;
+  const limit = checkLimit(flags.limit ?? flags.pageSize);
   const after = flags.after ?? flags.startingAfter ?? flags['starting-after'];
-  if (limit !== undefined && limit !== '') q.limit = limit;
+  if (limit !== undefined) q.limit = limit;
   if (after !== undefined && after !== '') q.startingAfter = after;
   return q;
 }
@@ -176,4 +244,4 @@ function maybeJson(flags, body, fallback) {
   return false;
 }
 
-module.exports = { checkResp, readData, maybeJson, pagination, cursorFooter, confirmPlainText };
+module.exports = { checkResp, isRejected, readData, maybeJson, pagination, cursorFooter, confirmPlainText };
