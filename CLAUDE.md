@@ -39,8 +39,8 @@ Then run `jonggrang task next` to find your task assignment — do NOT read `.jo
 
 - **Name**: mayar-cli
 - **Type**: api
-- **Stack**: node-typescript
-- **Test command**: echo 'no test command configured'
+- **Stack**: node-javascript (CommonJS, Node 22+)
+- **Test command**: npm test
 
 ## Bug Reporting
 

@@ -139,3 +139,97 @@ describe('legacy migration (~/.mayar/config.json → XDG)', () => {
     assert.equal(config.load(), null);
   });
 });
+
+// --- hosts, credentials, endpoint ------------------------------------------
+
+const { captureOutput } = require('./helpers');
+
+function withEnv(vars, fn) {
+  const prev = {};
+  for (const [k, v] of Object.entries(vars)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+  try { return fn(); } finally {
+    for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+describe('hosts', () => {
+  beforeEach(() => config._resetLegacyWarning());
+  after(() => config.setRuntimeEndpoint(null));
+  const clean = { MAYAR_API_URL: undefined, MAYAR_AUTH_URL: undefined, MAYAR_SANDBOX_LEGACY: undefined };
+
+  test('production uses mayar.id hosts', () => withEnv(clean, () => {
+    config.setRuntimeEndpoint('production');
+    assert.equal(config.apiBaseUrl(), 'https://api.mayar.id');
+    assert.equal(config.authBaseUrl(), 'https://auth.mayar.id');
+    assert.equal(config.webBaseUrl(), 'https://web.mayar.id');
+  }));
+
+  test('--sandbox uses mayar.io hosts', () => withEnv(clean, () => {
+    config.setRuntimeEndpoint('sandbox');
+    assert.equal(config.apiBaseUrl(), 'https://api.mayar.io');
+    assert.equal(config.authBaseUrl(), 'https://auth.mayar.io');
+    assert.equal(config.webBaseUrl(), 'https://web.mayar.io');
+  }));
+
+  test('MAYAR_SANDBOX_LEGACY=1 uses mayar.club and warns once', () => withEnv({ ...clean, MAYAR_SANDBOX_LEGACY: '1' }, () => {
+    config.setRuntimeEndpoint('sandbox');
+    const cap = captureOutput();
+    try {
+      assert.equal(config.apiBaseUrl(), 'https://api.mayar.club');
+      assert.equal(config.authBaseUrl(), 'https://auth.mayar.club');
+    } finally { cap.restore(); }
+    assert.equal((cap.stderr.match(/deprecated/g) || []).length, 1);
+  }));
+
+  test('an explicit MAYAR_API_URL on mayar.club also warns', () => withEnv({ ...clean, MAYAR_API_URL: 'https://api.mayar.club' }, () => {
+    const cap = captureOutput();
+    try { config.apiBaseUrl(); } finally { cap.restore(); }
+    assert.match(cap.stderr, /old Mayar sandbox domain/);
+  }));
+
+  test('a look-alike host does not warn', () => withEnv({ ...clean, MAYAR_API_URL: 'https://notmayar.club.example.com' }, () => {
+    const cap = captureOutput();
+    try { config.apiBaseUrl(); } finally { cap.restore(); }
+    assert.equal(cap.stderr, '');
+  }));
+});
+
+describe('resolveCredential', () => {
+  test('--api-key > MAYAR_API_KEY > saved API key > login token', () => {
+    const cfg = { apiKey: 'saved', auth: { authToken: 'login' } };
+    withEnv({ MAYAR_API_KEY: 'env' }, () => {
+      assert.deepEqual(config.resolveCredential({ apiKey: 'flag' }, cfg), { value: 'flag', source: '--api-key' });
+      assert.deepEqual(config.resolveCredential({}, cfg), { value: 'env', source: 'MAYAR_API_KEY' });
+    });
+    withEnv({ MAYAR_API_KEY: undefined }, () => {
+      assert.deepEqual(config.resolveCredential({}, cfg), { value: 'saved', source: 'saved API key' });
+      assert.deepEqual(config.resolveCredential({}, { auth: { authToken: 'login' } }), { value: 'login', source: 'login token' });
+      assert.equal(config.resolveCredential({}, null), null);
+    });
+  });
+});
+
+describe('endpoint and file mode', () => {
+  after(() => config.setRuntimeEndpoint(null));
+
+  test('runtimeEndpoint() is null unless a flag set it', () => {
+    config.setRuntimeEndpoint(null);
+    assert.equal(config.runtimeEndpoint(), null);
+    config.setRuntimeEndpoint('sandbox');
+    assert.equal(config.runtimeEndpoint(), 'sandbox');
+  });
+
+  test('config file is created with mode 0600', { skip: process.platform === 'win32' }, () => {
+    config.save({ apiKey: 'x' });
+    assert.equal(fs.statSync(config.file).mode & 0o777, 0o600);
+  });
+
+  test('an invalid stored endpoint is refused, not treated as production', () => withEnv({ NODE_ENV: undefined }, () => {
+    config.save({ apiKey: 'x', endpoint: 'sandbx' });
+    config.setRuntimeEndpoint(null);
+    assert.throws(() => config.resolveEndpoint(), /Invalid endpoint "sandbx".*mayar config reset/);
+  }));
+});

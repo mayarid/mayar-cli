@@ -139,3 +139,34 @@ describe('table()', () => {
     assert.ok(!ANSI.test(cap.stdout));
   });
 });
+
+describe('safe output', () => {
+  test('table strips escape sequences from cells', () => {
+    const cap = captureOutput();
+    try { ui.table([{ name: '\x1b[2J\x1b]0;pwn\x07Budi' }], ['name']); } finally { cap.restore(); }
+    assert.doesNotMatch(cap.stdout, /\x1b\[2J|\x1b\]0/);
+    assert.match(cap.stdout, /Budi/);
+  });
+
+  test('jsonOut escapes C1 controls and stays valid JSON', () => {
+    const cap = captureOutput();
+    try { ui.jsonOut({ n: 'a\x9b2Jb' }); } finally { cap.restore(); }
+    assert.doesNotMatch(cap.stdout, /\x9b/);
+    assert.deepEqual(JSON.parse(cap.stdout), { n: 'a\x9b2Jb' });
+  });
+});
+
+describe('fields', () => {
+  test('aligns labels, skips empty values, cleans values, returns the count', { skip }, () => {
+    const cap = captureOutput();
+    let shown;
+    try {
+      shown = ui.fields([['Code', 'ABC'], ['Missing', null], ['Empty', ''], ['Discount type', '\x1b[31mflat\x1b[0m'], ['Zero', 0]]);
+    } finally { cap.restore(); }
+    assert.equal(shown, 3);
+    assert.equal(cap.stdout,
+      'Code:          ABC\n' +
+      'Discount type: flat\n' +
+      'Zero:          0\n');
+  });
+});

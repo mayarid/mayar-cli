@@ -1,47 +1,62 @@
+// Command helpers: read --data, build pagination queries, print list footers,
+// and check customer-facing text. Response checking lives in src/response.js.
+
 const fs = require('fs');
 const ui = require('./ui');
+const { findHtml } = require('./security');
+const { checkData, checkLimit } = require('./guards');
 
-// Pull the field-level part of an error response out of the envelope. Mayar
-// puts the human summary in `messages`/`message` ("Validation Error") and the
-// useful bit — which field failed — in one of these siblings.
-function errorDetail(body, summary) {
-  if (!body || typeof body !== 'object') return '';
-  const detail = body.errors ?? body.error ?? body.details ?? body.validation ?? body.data;
-  if (detail === undefined || detail === null) return '';
-  if (typeof detail === 'string') return detail === summary ? '' : detail;
-  try {
-    const json = JSON.stringify(detail);
-    return json === '{}' || json === '[]' ? '' : json;
-  } catch (_) { return ''; }
+// Customer-facing text should be plain text. If any of `paths` in `body` looks
+// like HTML, ask before sending (TTY), or refuse (no TTY, for example an agent
+// or a script). Mayar stores the text as it is, and a page that shows it
+// without escaping would run it.
+async function confirmPlainText(body, paths, { isTTY = process.stdin.isTTY, ask = ui.ask } = {}) {
+  const hits = findHtml(body, paths);
+  if (!hits.length) return;
+  const fields = hits.join(', ');
+  if (!isTTY) {
+    throw new Error(`HTML-like content in ${fields}. Customer-facing fields must be plain text. ` +
+      'Nothing was sent. Remove the markup, or run the command in a terminal to confirm it.');
+  }
+  process.stderr.write(ui.yellow(`Warning: HTML-like content in ${fields}. ` +
+    'Customer-facing fields should be plain text.') + '\n');
+  const ans = await ask('Send anyway? [y/N] ');
+  if (!/^y/i.test(String(ans).trim())) throw new Error('Cancelled. Nothing was sent.');
 }
 
-function checkResp(res) {
-  if (res.status >= 200 && res.status < 300) return;
-  const msg = (res.body && (res.body.messages || res.body.message)) || res.raw || '';
-  const detail = process.env.MAYAR_DEBUG ? res.raw : errorDetail(res.body, msg);
-  const err = new Error(`API ${res.status} — ${msg}` + (detail ? `\n  ${detail}` : ''));
-  err.status = res.status;
-  err.body = res.body;
-  throw err;
-}
+const DATA_USAGE = 'Pass inline JSON in single quotes (--data \'{"name":"x"}\') or a file (--data @payload.json).';
 
+// Parse --data (inline JSON or @file), then run the guards on it.
 function readData(value) {
   if (!value) return undefined;
+  let text = value;
+  let source = '--data';
   if (value.startsWith('@')) {
-    const content = fs.readFileSync(value.slice(1), 'utf8');
-    return JSON.parse(content);
+    const file = value.slice(1);
+    source = `--data file ${file}`;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch (err) {
+      throw new Error(`Cannot read ${source}: ${err.code || err.message}. ${DATA_USAGE}`);
+    }
   }
-  return JSON.parse(value);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Invalid JSON in ${source}: ${err.message}. ${DATA_USAGE}`);
+  }
+  return checkData(body);
 }
 
 // Build a v2 cursor pagination query from flags.
-// v2 uses limit + startingAfter. --pageSize is accepted as an alias for --limit,
-// --after is the short form of --starting-after.
+// v2 uses limit + startingAfter. --pageSize is an alias for --limit; the
+// parser maps --starting-after and --startingAfter to flags.after.
 function pagination(flags, extra) {
   const q = { ...(extra || {}) };
-  const limit = flags.limit ?? flags.pageSize;
-  const after = flags.after ?? flags.startingAfter ?? flags['starting-after'];
-  if (limit !== undefined && limit !== '') q.limit = limit;
+  const limit = checkLimit(flags.limit ?? flags.pageSize);
+  const after = flags.after;
+  if (limit !== undefined) q.limit = limit;
   if (after !== undefined && after !== '') q.startingAfter = after;
   return q;
 }
@@ -73,4 +88,4 @@ function maybeJson(flags, body, fallback) {
   return false;
 }
 
-module.exports = { checkResp, readData, maybeJson, pagination, cursorFooter };
+module.exports = { readData, maybeJson, pagination, cursorFooter, confirmPlainText };

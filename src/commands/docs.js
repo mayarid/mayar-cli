@@ -253,7 +253,7 @@ async function run(ctx) {
   const topic = positional.length > 0 ? positional.join(' ') : null;
   const refresh = flags.refresh || false;
   const json = flags.json || false;
-  const sectionFilter = flags.section || flags.category || null;
+  const sectionFilter = flags.section || null; // --category is an alias, parsed into flags.section
   const compact = flags.compact || false;
   const showAll = flags.all || false;
 

@@ -1,7 +1,5 @@
-// Tests for src/util.js — checkResp, readData, maybeJson.
-// Built-in node:test + node:assert/strict only. Mock-free and deterministic:
-// readData's file branch uses a real temp file; maybeJson's stdout side effect
-// is captured (not stubbed) via the shared captureOutput helper.
+// Tests for src/util.js — readData, maybeJson, confirmPlainText.
+// Response checking is tested in test/response.test.js.
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -9,77 +7,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { checkResp, readData, maybeJson } = require('../src/util');
+const { readData, maybeJson, confirmPlainText } = require('../src/util');
 const { captureOutput } = require('./helpers');
-
-describe('checkResp', () => {
-  test('returns undefined for a 200 response (passes through)', () => {
-    assert.equal(checkResp({ status: 200, body: { foo: 1 } }), undefined);
-  });
-
-  test('passes through across the whole 2xx range', () => {
-    for (const status of [200, 201, 204, 299]) {
-      assert.doesNotThrow(() => checkResp({ status, body: {} }));
-    }
-  });
-
-  test('throws for status just below 200', () => {
-    assert.throws(() => checkResp({ status: 199, body: {} }));
-  });
-
-  test('throws for status at 300 and above', () => {
-    assert.throws(() => checkResp({ status: 300, body: {} }));
-    assert.throws(() => checkResp({ status: 404, body: {} }));
-    assert.throws(() => checkResp({ status: 500, body: {} }));
-  });
-
-  test('thrown error carries .status and .body', () => {
-    const body = { message: 'Not found' };
-    let thrown;
-    try {
-      checkResp({ status: 404, body });
-    } catch (e) {
-      thrown = e;
-    }
-    assert.ok(thrown instanceof Error);
-    assert.equal(thrown.status, 404);
-    assert.equal(thrown.body, body);
-  });
-
-  test('message prefers body.messages over body.message', () => {
-    assert.throws(
-      () => checkResp({ status: 400, body: { messages: 'first', message: 'second' } }),
-      /API 400 — first/,
-    );
-  });
-
-  test('message falls back to body.message when messages is absent', () => {
-    assert.throws(
-      () => checkResp({ status: 400, body: { message: 'bad request' } }),
-      /API 400 — bad request/,
-    );
-  });
-
-  test('message falls back to res.raw when body has no message fields', () => {
-    assert.throws(
-      () => checkResp({ status: 500, body: {}, raw: 'raw text' }),
-      /API 500 — raw text/,
-    );
-  });
-
-  test('message tolerates a missing body (empty message)', () => {
-    let thrown;
-    try {
-      checkResp({ status: 500 });
-    } catch (e) {
-      thrown = e;
-    }
-    assert.ok(thrown instanceof Error);
-    assert.equal(thrown.status, 500);
-    assert.equal(thrown.body, undefined);
-    assert.equal(thrown.message, 'API 500 — ');
-  });
-});
 
 describe('readData', () => {
   test('returns undefined for falsy input', () => {
@@ -110,12 +39,17 @@ describe('readData', () => {
   });
 
   test('throws on malformed inline JSON', () => {
-    assert.throws(() => readData('{not json}'), SyntaxError);
+    assert.throws(() => readData('{not json}'), /Invalid JSON in --data: .*Pass inline JSON in single quotes/);
   });
 
   test('throws when an @file reference points at a missing file', () => {
     const missing = path.join(os.tmpdir(), 'readdata-does-not-exist-12345.json');
-    assert.throws(() => readData('@' + missing));
+    assert.throws(() => readData('@' + missing), /Cannot read --data file .*: ENOENT\./);
+  });
+
+  test('runs the guards on the parsed body', () => {
+    assert.throws(() => readData('{"amount":10.5}'), /amount must be a whole number above 0.*Nothing was sent/);
+    assert.throws(() => readData('{"expiredAt":"2001-01-01T00:00:00Z"}'), /expiredAt is in the past/);
   });
 });
 
@@ -158,5 +92,25 @@ describe('maybeJson', () => {
 
   test('non-function fallback is ignored, returning false', () => {
     assert.equal(maybeJson({ json: false }, {}, 'not-a-function'), false);
+  });
+});
+
+describe('confirmPlainText', () => {
+  const body = { name: '<script>x</script>' };
+  test('passes plain text without asking', async () => {
+    let asked = false;
+    await confirmPlainText({ name: 'Budi' }, ['name'], { isTTY: true, ask: async () => { asked = true; } });
+    assert.equal(asked, false);
+  });
+  test('refuses HTML-like text without a TTY', async () => {
+    await assert.rejects(confirmPlainText(body, ['name'], { isTTY: false }), /HTML-like content in name.*Nothing was sent/);
+  });
+  test('asks in a TTY: yes sends, no cancels', async () => {
+    const cap = captureOutput();
+    try {
+      await confirmPlainText(body, ['name'], { isTTY: true, ask: async () => 'y' });
+      await assert.rejects(confirmPlainText(body, ['name'], { isTTY: true, ask: async () => '' }), /Cancelled\. Nothing was sent/);
+    } finally { cap.restore(); }
+    assert.match(cap.stderr, /Warning: HTML-like content in name/);
   });
 });

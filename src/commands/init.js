@@ -13,7 +13,7 @@ async function run({ flags }) {
 
   // Interactive environment selection
   const endpoint = await ui.selectEnvironment(flags);
-  const webUrl = endpoint === 'sandbox' ? 'https://web.mayar.club' : 'https://web.mayar.id';
+  const webUrl = config.webBaseUrl(endpoint);
 
   process.stdout.write('\n' + `${ui.bold('Welcome to Mayar CLI.')}\n`);
   process.stdout.write(`Get your key from ${ui.cyan(webUrl)} → Integration → API Key.\n\n`);

@@ -1,4 +1,5 @@
 const readline = require('readline');
+const { stripControl, escapeJsonText } = require('./security');
 
 const isTTY = !!process.stdout.isTTY;
 const wrap = (n) => (s) => isTTY ? `\x1b[${n}m${s}\x1b[0m` : String(s);
@@ -73,8 +74,25 @@ function askSecret(question) {
   });
 }
 
+// Text from the API is untrusted. `table`, `fields` and `jsonOut` clean it
+// themselves; use `safe` (= stripControl) only for API text printed any other
+// way, for example inside a sentence.
+const safe = stripControl;
+
+// Print "Label:  value" lines with aligned values. Rows with a null, undefined
+// or empty value are skipped. Values are cleaned of escape sequences.
+//   ui.fields([['Code', c.code], ['Discount', `${c.discountValue}%`]])
+function fields(rows) {
+  const shown = rows.filter(([, v]) => v !== null && v !== undefined && v !== '');
+  const width = Math.max(0, ...shown.map(([label]) => label.length + 1));
+  for (const [label, value] of shown) {
+    process.stdout.write(`${bold((label + ':').padEnd(width))} ${stripControl(String(value))}\n`);
+  }
+  return shown.length;
+}
+
 function jsonOut(obj) {
-  process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
+  process.stdout.write(escapeJsonText(JSON.stringify(obj, null, 2)) + '\n');
 }
 
 function table(rows, columns) {
@@ -82,15 +100,16 @@ function table(rows, columns) {
     process.stdout.write(dim('(no rows)') + '\n');
     return;
   }
+  const cell = (r, col) => stripControl(String(r[col] ?? '')).replace(/[\t\n]/g, ' ');
   const widths = columns.map((col) =>
-    Math.min(48, Math.max(col.length, ...rows.map((r) => String(r[col] ?? '').length))),
+    Math.min(48, Math.max(col.length, ...rows.map((r) => cell(r, col).length))),
   );
   const head = columns.map((col, i) => bold(col.padEnd(widths[i]))).join('  ');
   process.stdout.write(head + '\n');
   process.stdout.write(columns.map((_, i) => dim('─'.repeat(widths[i]))).join('  ') + '\n');
   for (const r of rows) {
     const line = columns.map((col, i) => {
-      let v = String(r[col] ?? '');
+      let v = cell(r, col);
       if (v.length > widths[i]) v = v.slice(0, widths[i] - 1) + '…';
       return v.padEnd(widths[i]);
     }).join('  ');
@@ -170,7 +189,7 @@ async function selectEnvironment(flags = {}) {
     process.stdout.write(bold('Select Environment:') + '\n');
     const environments = [
       { title: 'Production', value: 'production', description: 'Live environment (web.mayar.id / api.mayar.id)' },
-      { title: 'Sandbox', value: 'sandbox', description: 'Testing environment (web.mayar.club / api.mayar.club)' },
+      { title: 'Sandbox', value: 'sandbox', description: 'Testing environment (web.mayar.io / api.mayar.io)' },
     ];
     const selected = await pickFromList(environments, {
       displayKey: 'title',
@@ -187,6 +206,6 @@ async function selectEnvironment(flags = {}) {
 }
 
 module.exports = {
-  printBanner, ask, askSecret, jsonOut, table, pickFromList, selectEnvironment,
+  printBanner, ask, askSecret, jsonOut, table, fields, pickFromList, selectEnvironment, safe,
   dim, bold, red, green, yellow, cyan, magenta,
 };

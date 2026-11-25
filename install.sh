@@ -11,7 +11,7 @@
 #   MAYAR_INSTALL_DIR   Where to extract the package (default: ~/.local/share/mayar)
 #   MAYAR_BIN_DIR       Where to symlink the binary  (default: ~/.local/bin)
 #
-# Requirements: node >= 18, curl, tar
+# Requirements: node >= 22, npm, curl, tar
 #
 set -eu
 
@@ -32,11 +32,12 @@ fail()  { printf "%b✗%b %s\n" "$C_RED" "$C_RST" "$*" >&2; exit 1; }
 # --- preflight --------------------------------------------------------------
 command -v curl >/dev/null 2>&1 || fail "curl is required."
 command -v tar  >/dev/null 2>&1 || fail "tar is required."
-command -v node >/dev/null 2>&1 || fail "Node.js >= 18 is required. Install from https://nodejs.org and re-run."
+command -v node >/dev/null 2>&1 || fail "Node.js >= 22 is required. Install from https://nodejs.org and re-run."
+command -v npm  >/dev/null 2>&1 || fail "npm is required (it comes with Node.js)."
 
 NODE_MAJOR=$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')
-if [ "$NODE_MAJOR" -lt 18 ]; then
-  fail "Node.js >= 18 is required (you have $(node -v)). Upgrade and re-run."
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  fail "Node.js >= 22 is required (you have $(node -v)). Upgrade and re-run."
 fi
 
 # --- resolve version --------------------------------------------------------

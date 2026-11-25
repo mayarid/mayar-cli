@@ -1,18 +1,6 @@
 const config = require('../config');
 const ui = require('../ui');
-
-function decodeJwt(token) {
-  if (!token) return null;
-  const parts = String(token).split('.');
-  if (parts.length !== 3) return null;
-  try {
-    const padded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const pad = padded.length % 4 === 0 ? '' : '='.repeat(4 - (padded.length % 4));
-    return JSON.parse(Buffer.from(padded + pad, 'base64').toString('utf8'));
-  } catch (_) {
-    return null;
-  }
-}
+const { identity } = require('../jwt');
 
 function maskKey(key) {
   if (!key) return null;
@@ -26,36 +14,18 @@ async function run({ flags }) {
   const apiBaseUrl = config.apiBaseUrl();
   const authBaseUrl = config.authBaseUrl();
 
-  // Resolve API Key from flags, env, or config
-  const apiKey = flags.apiKey || process.env.MAYAR_API_KEY || cfg.apiKey || null;
-  const maskedApiKey = maskKey(apiKey);
-
-  // Decode JWT if apiKey is a JWT
-  const jwtPayload = decodeJwt(apiKey);
-
-  // Auth session info from login
+  // Same credential order as every other command.
+  const cred = config.resolveCredential(flags, cfg);
+  const maskedApiKey = maskKey(cred && cred.value);
   const authSession = cfg.auth || null;
 
-  // Extract user info
-  const name =
-    authSession?.name ||
-    jwtPayload?.name ||
-    jwtPayload?.merchantName ||
-    jwtPayload?.fullName ||
-    null;
-
-  const email =
-    authSession?.email ||
-    jwtPayload?.email ||
-    jwtPayload?.merchantEmail ||
-    null;
-
-  const accountId =
-    jwtPayload?.accountId ||
-    jwtPayload?.userId ||
-    jwtPayload?.sub ||
-    jwtPayload?.id ||
-    null;
+  // The login session knows the name and email; the key's JWT may add more.
+  const who = identity(cred && cred.value) || {};
+  const user = {
+    name: authSession?.name || who.name || null,
+    email: authSession?.email || who.email || null,
+    accountId: who.accountId || null,
+  };
 
   if (flags.json) {
     ui.jsonOut({
@@ -63,12 +33,9 @@ async function run({ flags }) {
       apiBaseUrl,
       authBaseUrl,
       apiKey: maskedApiKey,
-      hasApiKey: !!apiKey,
-      user: {
-        name,
-        email,
-        accountId,
-      },
+      hasApiKey: !!cred,
+      credentialSource: cred ? cred.source : null,
+      user,
       authSession: authSession
         ? {
             loggedIn: true,
@@ -83,26 +50,16 @@ async function run({ flags }) {
   }
 
   process.stdout.write(ui.bold('Mayar CLI Status') + '\n\n');
-  process.stdout.write(`${ui.bold('Environment:')}   ${endpoint} ${ui.dim('(' + apiBaseUrl + ')')}\n`);
-  process.stdout.write(`${ui.bold('Auth Server:')}   ${authBaseUrl}\n`);
-  process.stdout.write(
-    `${ui.bold('API Key:')}       ${maskedApiKey ? maskedApiKey + ui.green(' (configured)') : ui.dim('(not configured)')}\n`,
-  );
-
-  if (name) {
-    process.stdout.write(`${ui.bold('User Name:')}     ${name}\n`);
-  }
-  if (email) {
-    process.stdout.write(`${ui.bold('User Email:')}    ${email}\n`);
-  }
-  if (accountId) {
-    process.stdout.write(`${ui.bold('Account ID:')}    ${accountId}\n`);
-  }
-  if (authSession && authSession.expiresAt) {
-    process.stdout.write(`${ui.bold('Token Expires:')} ${authSession.expiresAt}\n`);
-  }
-
-  process.stdout.write(`${ui.bold('Config Path:')}   ${config.file}\n`);
+  ui.fields([
+    ['Environment', `${endpoint} (${apiBaseUrl})`],
+    ['Auth Server', authBaseUrl],
+    ['Credential', cred ? `${maskedApiKey} (${cred.source})` : '(not configured)'],
+    ['User Name', user.name],
+    ['User Email', user.email],
+    ['Account ID', user.accountId],
+    ['Token Expires', authSession && authSession.expiresAt],
+    ['Config Path', config.file],
+  ]);
 }
 
 module.exports = { run };

@@ -1,6 +1,5 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp } = require('../util');
 
 const USAGE = 'Usage: mayar software verify <licenseCode> <productId>';
 
@@ -11,7 +10,7 @@ async function run({ apiKey, flags, positional }) {
   const res = await api.request('POST', '/software/v2/license/verify', {
     apiKey, body: { licenseCode, productId },
   });
-  checkResp(res); ui.jsonOut(res.body);
+  ui.jsonOut(res.body);
 }
 
 module.exports = { run };

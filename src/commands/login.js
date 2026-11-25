@@ -1,19 +1,7 @@
 const { MayarAuth } = require('@mayaross/auth');
 const config = require('../config');
 const ui = require('../ui');
-
-// Decode the payload of a JWT without verifying its signature.
-function decodeJwt(token) {
-  const parts = String(token || '').split('.');
-  if (parts.length !== 3) return null;
-  try {
-    const padded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const pad = padded.length % 4 === 0 ? '' : '='.repeat(4 - (padded.length % 4));
-    return JSON.parse(Buffer.from(padded + pad, 'base64').toString('utf8'));
-  } catch (_) {
-    return null;
-  }
-}
+const { decodeJwt } = require('../jwt');
 
 async function run({ flags }) {
   if (!flags.json) {
@@ -72,7 +60,7 @@ async function run({ flags }) {
     return;
   }
 
-  process.stdout.write('\n' + ui.green(`✓ Signed in${name ? ` as ${name}` : ''}${email ? ` (${email})` : ''}`) + '\n');
+  process.stdout.write('\n' + ui.green(`✓ Signed in${name ? ` as ${ui.safe(name)}` : ''}${email ? ` (${ui.safe(email)})` : ''}`) + '\n');
   if (expiresAt) process.stdout.write(`${ui.bold('Token expires:')} ${expiresAt}\n`);
   process.stdout.write(ui.dim(`Credentials saved to ${config.file}`) + '\n');
 }

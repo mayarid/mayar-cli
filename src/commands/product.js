@@ -1,6 +1,7 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, readData, pagination, cursorFooter } = require('../util');
+const { readData, pagination, cursorFooter } = require('../util');
+const { checkLimit } = require('../guards');
 
 const USAGE = 'Usage: mayar product <list|search|type|get|close|reopen|status|transactions|create|edit|sort>';
 const SORT_TYPES = ['generic_link', 'event', 'webinar', 'digital_product'];
@@ -52,7 +53,6 @@ async function run({ apiKey, flags, positional }) {
         apiKey,
         query: pagination(flags, { search: flags.search, type: flags.type, stock: flags.stock }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
@@ -61,7 +61,6 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('GET', '/hl/v2/products', {
         apiKey, query: pagination(flags, { search: rest.join(' ') }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
@@ -70,14 +69,13 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('GET', `/hl/v2/products/types/${encodeURIComponent(rest[0])}`, {
         apiKey, query: pagination(flags, { search: flags.search }),
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
     case 'get': {
       if (!rest[0]) throw new Error('Usage: mayar product get <id>');
       const res = await api.request('GET', `/hl/v2/products/${encodeURIComponent(rest[0])}`, { apiKey });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'transactions': {
       if (!rest[0]) throw new Error('Usage: mayar product transactions <id>');
@@ -85,14 +83,14 @@ async function run({ apiKey, flags, positional }) {
         apiKey,
         query: pagination(flags, { status: flags.status, customerId: flags.customerId, fields: flags.fields }),
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'close':
     case 'reopen': {
       if (!rest[0]) throw new Error(`Usage: mayar product ${sub} <id>`);
       const action = sub === 'reopen' ? 'open' : 'close';
       const res = await api.request('POST', `/hl/v2/products/${encodeURIComponent(rest[0])}/${action}`, { apiKey });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'status': {
       if (!rest[0] || !rest[1]) throw new Error(`Usage: mayar product status <id> <${STATUS_ACTIONS.join('|')}>`);
@@ -100,7 +98,7 @@ async function run({ apiKey, flags, positional }) {
         throw new Error(`Invalid action "${rest[1]}". Must be one of: ${STATUS_ACTIONS.join(', ')}`);
       }
       const res = await api.request('POST', `/hl/v2/products/${encodeURIComponent(rest[0])}/${rest[1]}`, { apiKey });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'create': {
       const type = flags.type;
@@ -110,7 +108,7 @@ async function run({ apiKey, flags, positional }) {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar product create requires --data <json|@file>');
       const res = await api.request('POST', path, { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'sort': {
       if (!rest[0]) throw new Error(`Usage: mayar product sort <${SORT_TYPES.join('|')}>`);
@@ -121,14 +119,13 @@ async function run({ apiKey, flags, positional }) {
       // which uses camelCase `startingAfter`). Build the query directly rather than via
       // pagination() to preserve the exact wire name.
       const query = {};
-      const limit = flags.limit ?? flags.pageSize;
-      const after = flags.after ?? flags.startingAfter ?? flags['starting-after'];
+      const limit = checkLimit(flags.limit ?? flags.pageSize);
+      const after = flags.after;
       if (limit) query.limit = limit;
       if (after) query.starting_after = after;
       const res = await api.request('POST', `/hl/v2/payment-links/sort/${encodeURIComponent(rest[0])}`, {
         apiKey, query,
       });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       renderList(res.body); return;
     }
@@ -142,7 +139,7 @@ async function run({ apiKey, flags, positional }) {
       if (!body) throw new Error('mayar product edit requires --data <json|@file>');
       body.id = body.id || rest[0];
       const res = await api.request('POST', pathFn(encodeURIComponent(rest[0])), { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     default:
       throw new Error(USAGE);

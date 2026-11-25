@@ -12,13 +12,13 @@ ${ui.bold('Setup:')}
   init                                Run first-time setup (or re-configure API key)
   login [--no-browser]                Sign in via browser (Google OAuth) and save auth token
   status                              Show active environment, user identity, and API key status
-  api-key <key>                       Save API key non-interactively
+  api-key <key> [--sandbox]           Save API key non-interactively (production unless --sandbox)
   config show                         Show config path and masked API key
   config reset                        Remove the saved API key
 
 ${ui.bold('Agent Skills:')}
-  skill install [--target <all|agents|claude|opencode|codex|cursor>] [--force]
-                                              Install Mayar SKILL.md into AI agent directories
+  skill install [--target <all|agents|claude|opencode|codex|cursor>] [--global]
+                                              Install the official Mayar skill (mayarid/skills, mayar-v2)
 
 ${ui.bold('Documentation:')}
   docs [topic] [--section S] [--limit N] [--compact] [--all] [--json] [--refresh]
@@ -65,7 +65,7 @@ ${ui.bold('Customers:')}
   customer list
   customer create --data <json|@file>
   customer search <email>
-  customer update <fromEmail> <toEmail>
+  customer update <customerId> <newEmail>
   customer magic-link <email>
 
 ${ui.bold('Transactions:')}
@@ -143,7 +143,7 @@ ${ui.bold('Webhooks:')}
 ${ui.bold('Global flags:')}
   --json                Output raw JSON instead of formatted tables
   --api-key <key>       Use this API key for the run (overrides env + saved config)
-  --sandbox             Target the sandbox environment (api.mayar.club)
+  --sandbox             Target the sandbox environment (api.mayar.io)
   --production          Target the production environment (api.mayar.id)
   --env <value>         Target environment: sandbox or production
   --limit N             Page size (v2, default 10, max 50)
@@ -158,13 +158,51 @@ ${ui.bold('Environment:')}
   MAYAR_API_KEY         Used when --api-key is not given and no config is saved
   MAYAR_API_URL         Override API base URL
   MAYAR_AUTH_URL        Override auth server base URL (used by 'login')
-  NODE_ENV=development  Target the sandbox (api/auth .mayar.club) instead of production
+  MAYAR_TIMEOUT_MS      Request timeout in milliseconds (default 30000)
+  MAYAR_SANDBOX_LEGACY=1  Use the old sandbox domain (*.mayar.club). Deprecated.
+  NODE_ENV=development  Target the sandbox (api/auth .mayar.io) instead of production
 
-${ui.dim('Resolution order: --api-key flag > MAYAR_API_KEY env > saved config.')}
+${ui.dim('Credential order: --api-key flag > MAYAR_API_KEY env > saved API key > saved login token.')}
 ${ui.dim('Endpoint: --sandbox/--production/--env > NODE_ENV=development > stored endpoint (default production).')}
 ${ui.dim('Priority:  invocation flags → NODE_ENV → config.json → production (default)')}
 ${ui.dim('Config:   ~/.config/mayar/config.json (chmod 600)')}
 `;
+
+// Every flag the CLI knows, in one table: command-line name → { key, bool }.
+// `key` is the property set on `flags`; `bool` flags take no value. Add a new
+// flag here and nowhere else. Any other `--name` is still parsed (taking the
+// next argument as its value) but gets an "unknown flag" warning.
+const FLAGS = new Map();
+const bool = (key, ...names) => names.forEach((n) => FLAGS.set(n, { key, bool: true }));
+const value = (key, ...names) => names.forEach((n) => FLAGS.set(n, { key, bool: false }));
+
+bool('json', '--json');
+bool('force', '--force');
+bool('refresh', '--refresh');
+bool('compact', '--compact');
+bool('all', '--all');
+bool('no-browser', '--no-browser');
+bool('sandbox', '--sandbox');
+bool('production', '--production');
+bool('global', '--global');
+bool('help', '-h', '--help');
+bool('version', '-v', '--version');
+value('section', '--section', '--category');
+value('apiKey', '--api-key');
+value('page', '--page');
+value('pageSize', '--pageSize', '--page-size');
+value('limit', '--limit');
+value('after', '--after', '--starting-after', '--startingAfter');
+value('data', '--data');
+value('env', '--env');
+// Command-specific value flags, read as flags.<name> by the commands.
+for (const name of [
+  'customerId', 'email', 'endAt', 'fields', 'membershipTierId', 'paymentLinkId',
+  'prioritizeMessage', 'productId', 'rating', 'search', 'startAt', 'status',
+  'stock', 'target', 'tierId', 'type', 'urlDestination',
+]) value(name, `--${name}`);
+
+const KNOWN_KEYS = new Set([...FLAGS.values()].map((f) => f.key));
 
 function parseFlags(argv) {
   const flags = {};
@@ -172,45 +210,31 @@ function parseFlags(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') { positional.push(...argv.slice(i + 1)); break; }
-    if (a === '--json') flags.json = true;
-    else if (a === '--force') flags.force = true;
-    else if (a === '--refresh') flags.refresh = true;
-    else if (a === '--compact') flags.compact = true;
-    else if (a === '--all') flags.all = true;
-    else if (a === '--section' || a === '--category') flags.section = argv[++i];
-    else if (a === '--no-browser') flags['no-browser'] = true;
-    else if (a === '--sandbox') flags.sandbox = true;
-    else if (a === '--production') flags.production = true;
-    else if (a === '--api-key') flags.apiKey = argv[++i];
-    else if (a.startsWith('--api-key=')) flags.apiKey = a.slice('--api-key='.length);
-    else if (a === '--page') flags.page = argv[++i];
-    else if (a === '--pageSize' || a === '--page-size') flags.pageSize = argv[++i];
-    else if (a === '--limit') flags.limit = argv[++i];
-    else if (a === '--after' || a === '--starting-after' || a === '--startingAfter') flags.after = argv[++i];
-    else if (a === '--data') flags.data = argv[++i];
-    else if (a === '--env') flags.env = argv[++i];
-    else if (a === '-h' || a === '--help') flags.help = true;
-    else if (a === '-v' || a === '--version') flags.version = true;
-    else if (a.startsWith('--')) {
-      const eq = a.indexOf('=');
-      if (eq !== -1) flags[a.slice(2, eq)] = a.slice(eq + 1);
-      else flags[a.slice(2)] = argv[++i];
-    } else {
-      positional.push(a);
-    }
+    if (!a.startsWith('-')) { positional.push(a); continue; }
+    const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+    const name = eq === -1 ? a : a.slice(0, eq);
+    const inline = eq === -1 ? undefined : a.slice(eq + 1);
+    const spec = FLAGS.get(name);
+    if (spec && spec.bool) flags[spec.key] = true;
+    else if (spec) flags[spec.key] = inline ?? argv[++i];
+    else if (a.startsWith('--')) flags[name.slice(2)] = inline ?? argv[++i];
+    else positional.push(a);
   }
   return { flags, positional };
 }
 
+function unknownFlags(flags) {
+  return Object.keys(flags)
+    .filter((k) => !KNOWN_KEYS.has(k))
+    .map((name) => ({ name, value: flags[name] }));
+}
+
 async function ensureKey(flags) {
-  if (flags.apiKey) return flags.apiKey;
-  if (process.env.MAYAR_API_KEY) return process.env.MAYAR_API_KEY;
-  const cfg = config.load();
-  if (cfg && cfg.apiKey) return cfg.apiKey;
-  if (cfg && cfg.auth && cfg.auth.authToken) return cfg.auth.authToken;
+  const cred = config.resolveCredential(flags);
+  if (cred) return cred.value;
   ui.printBanner();
   const endpoint = await ui.selectEnvironment(flags);
-  const webUrl = endpoint === 'sandbox' ? 'https://web.mayar.club' : 'https://web.mayar.id';
+  const webUrl = config.webBaseUrl(endpoint);
   process.stdout.write('\n' + `${ui.bold('Welcome to Mayar CLI.')}\n`);
   process.stdout.write(`No API key found. Get yours from ${ui.cyan(webUrl)} → Integration → API Key.\n\n`);
   if (!process.stdin.isTTY) {
@@ -226,6 +250,10 @@ async function ensureKey(flags) {
 
 async function run(argv) {
   const { flags, positional } = parseFlags(argv);
+  for (const u of unknownFlags(flags)) {
+    const took = u.value === undefined ? 'no value' : `"${ui.safe(u.value)}" as its value`;
+    process.stderr.write(ui.yellow(`Warning: unknown flag --${ui.safe(u.name)} (took ${took}). Check the spelling with --help.`) + '\n');
+  }
 
   // Resolve endpoint override from flags
   if (flags.sandbox && flags.production) {
@@ -256,6 +284,7 @@ async function run(argv) {
     if (cmd === 'login') { return await require('./commands/login').run({ flags }); }
     if (cmd === 'status') { return await require('./commands/status').run({ flags }); }
     if (cmd === 'docs') { return await require('./commands/docs').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
+    if (cmd === 'skill' || cmd === 'skills') { return await require('./commands/skill').run({ flags, positional: [sub, ...rest].filter((x) => x !== undefined) }); }
     if (cmd === 'api-key' || cmd === 'apikey') {
       return await require('./commands/apikey').run({ positional: [sub, ...rest].filter((x) => x !== undefined) });
     }
@@ -313,7 +342,6 @@ async function run(argv) {
       credit:       './commands/credit',
       credits:      './commands/credit',
       saas:         './commands/saas',
-      skill:        './commands/skill',
       software:     './commands/software',
       'payment-link':  './commands/payment-link',
       paymentlink:     './commands/payment-link',
@@ -331,9 +359,10 @@ async function run(argv) {
     const ctx = { apiKey, flags, positional: [sub, ...rest].filter((x) => x !== undefined) };
     return await require(handler).run(ctx);
   } catch (err) {
-    process.stderr.write(ui.red('Error: ' + (err.message || String(err))) + '\n');
+    // Error text can carry server-controlled bytes, so clean it first.
+    process.stderr.write(ui.red('Error: ' + ui.safe(err.message || String(err))) + '\n');
     process.exit(1);
   }
 }
 
-module.exports = { run, parseFlags };
+module.exports = { run, parseFlags, unknownFlags };

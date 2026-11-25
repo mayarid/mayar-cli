@@ -1,20 +1,20 @@
 # mayar
 
-Command-line interface for the [Mayar](https://docs.mayar.id) API. Zero runtime dependencies — Node.js 18+ stdlib only.
+Command-line interface for the [Mayar](https://docs.mayar.id) API. Requires Node.js 22 or later. One runtime dependency: [`@mayaross/auth`](https://www.npmjs.com/package/@mayaross/auth), used by `mayar login`.
 
 ## Install
 
-**One-liner (no npm required):**
+**One-liner:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh | sh
 ```
 
-Downloads the latest tarball from the npm registry, extracts to `~/.local/share/mayar`, and symlinks the binary to `~/.local/bin/mayar`. Requires only `node>=18`, `curl`, and `tar`. Override paths or pin a version:
+Downloads the latest tarball from the npm registry, extracts to `~/.local/share/mayar`, and symlinks the binary to `~/.local/bin/mayar`. Requires `node>=22`, `npm`, `curl`, and `tar` (`npm` installs the one runtime dependency). Override paths or pin a version. Put the variables after the pipe, so they reach `sh`:
 
 ```bash
-MAYAR_VERSION=0.1.9 MAYAR_BIN_DIR=/usr/local/bin \
-  curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/mayarid/mayar-cli/main/install.sh \
+  | MAYAR_VERSION=1.2.0 MAYAR_BIN_DIR=/usr/local/bin sh
 ```
 
 **Via npm:**
@@ -43,7 +43,7 @@ mayar login
 
 Opens your browser for Google OAuth sign-in and saves the auth token automatically — no copy-pasting keys. Use `mayar login --no-browser` on headless machines to get a URL to open elsewhere.
 
-Alternatives (resolution order: `--api-key` flag → `MAYAR_API_KEY` env → saved config file):
+Credential order, the same for every command: `--api-key` flag → `MAYAR_API_KEY` env → saved API key → saved login token. An explicit API key always wins over a login token; `mayar status` shows which one is in use. Alternatives to `login`:
 
 **Option 1 — environment variable (recommended for CI/agents):**
 
@@ -67,7 +67,8 @@ mayar balance
 **Option 3 — non-interactive setup:**
 
 ```bash
-mayar api-key YOUR_KEY_HERE
+mayar api-key YOUR_KEY_HERE              # production key
+mayar api-key YOUR_SANDBOX_KEY --sandbox # sandbox key (api.mayar.io)
 ```
 
 **Option 4 — per-command override:**
@@ -86,7 +87,8 @@ Get your API key from [web.mayar.id](https://web.mayar.id) → Integration → A
 Setup
   init                                  First-time setup (interactive, masked input)
   login [--no-browser]                  Sign in via Google OAuth
-  api-key <key>                         Save API key non-interactively
+  api-key <key> [--sandbox]             Save API key non-interactively
+  skill install [--target T] [--global] Install the official Mayar agent skill (mayarid/skills)
   config show|reset                     Inspect or remove the saved config
 
 Account
@@ -96,7 +98,7 @@ Account
 Invoices
   invoice list [--limit --after --status --search]
   invoice get <id>
-  invoice close <id> | reopen <id>      POST /hl/v2/invoices/{id}/{open|close}
+  invoice close <id> | reopen <id>      POST /hl/v2/products/{id}/{open|close}
   invoice status <id> <action>          action ∈ open|close|active|closed|unlisted
   invoice edit <id> --data <json|@file>
   invoice filter --email <email> [--limit --after --status --search]
@@ -131,7 +133,7 @@ Customers
   customer list                          GET  /hl/v2/customers
   customer create --data <json|@file>
   customer search <email>                GET  /hl/v2/customers/detail?email=
-  customer update <fromEmail> <toEmail>
+  customer update <customerId> <newEmail>   POST /hl/v2/customers/{id}/update
   customer magic-link <email>            POST /hl/v2/customers/portal-login
 
 Transactions
@@ -209,6 +211,8 @@ Webhooks
 Global flags
   --json                Output raw JSON instead of pretty tables
   --api-key <key>       Use this API key for the run (also accepts --api-key=KEY)
+  --sandbox             Target the sandbox (api.mayar.io)
+  --production          Target production (api.mayar.id, default)
   --limit N             Page size (default 10, max 50)
   --after CURSOR        Pagination cursor (from previous nextStartingAfter)
   --pageSize N          Alias for --limit
@@ -220,7 +224,9 @@ Environment
   MAYAR_API_KEY         Used when --api-key is absent and no config is saved
   MAYAR_API_URL         Override API base URL
   MAYAR_AUTH_URL        Override auth server base URL (used by 'login')
-  NODE_ENV=development  Target the sandbox (*.mayar.club) instead of production
+  MAYAR_TIMEOUT_MS      Request timeout in milliseconds (default 30000)
+  MAYAR_SANDBOX_LEGACY=1  Use the old sandbox domain (*.mayar.club). Deprecated.
+  NODE_ENV=development  Target the sandbox (*.mayar.io) instead of production
 ```
 
 ## Examples
@@ -409,7 +415,7 @@ Two traps worth remembering: `tiers` (plural) **lists** a product's tiers while 
 | Key      | Value                                                                                       |
 | -------- | ------------------------------------------------------------------------------------------- |
 | Path     | `$XDG_CONFIG_HOME/mayar/config.json`, defaulting to `~/.config/mayar/config.json` (chmod 600) |
-| Endpoint | `MAYAR_API_URL` env or `https://api.mayar.id` (default)                                    |
+| Endpoint | `MAYAR_API_URL` env, else `https://api.mayar.id` (production, default) or `https://api.mayar.io` (`--sandbox`) |
 
 Legacy installs that wrote to `~/.mayar/config.json` are migrated automatically on first run.
 
@@ -417,8 +423,57 @@ To rotate keys: `mayar config reset && mayar init`.
 
 ## Notes
 
-- All requests use `Authorization: Bearer <key>`. Errors print `API <status> — <message>` and exit non-zero.
+- All requests use `Authorization: Bearer <key>`. Errors print `<METHOD> <path> failed (<status>) — <message>`, with a `Hint:` line when there is a known fix, and exit non-zero. `MAYAR_DEBUG=1` adds the raw response.
+- Requests time out after 30 seconds (`MAYAR_TIMEOUT_MS`). On HTTP 429 the CLI retries up to 3 times with backoff and honours `Retry-After`. When Mayar sends `X-RateLimit-*` headers, `--json` output includes them as `_rateLimit`.
 - `--data @file.json` reads from disk; `--data '{...}'` reads inline JSON.
 - `MAYAR_API_URL` overrides the base URL — useful for staging or custom proxy environments.
 - `mayar whoami` decodes the JWT locally and verifies the key live against `/hl/v2/balances`.
 - **v1.0.0 migration**: all API paths moved from `/hl/v1/*` to `/hl/v2/*`. `--page` is no longer used (v2 has no page numbers); the cursor is returned as `nextStartingAfter` in each response and passed as `--after` for the next page.
+
+## Troubleshooting
+
+Find the start of the error text in the left column.
+
+| Error text | What it means | What to do |
+|---|---|---|
+| `... failed (401) — Unauthorized` + `Hint: api.mayar.id (production) rejected the key for ...` | The key is valid in form, but Mayar refused it here. Often it is a key for the other environment. | Run again with `--sandbox` (or `--production`). Check with `mayar status` which credential is in use. |
+| `... failed (401)` + `Hint: The API key is invalid or expired` | The key is not a JWT, or it was revoked. | Get a new key in the dashboard → Integration → API Key, then `mayar api-key <key>`. |
+| `... failed (<status>) — Mayar rejected the request: ...` | Mayar answered HTTP 2xx but said the request failed. The CLI exits 1. | Read the message and the detail line under it. Usually a field is missing or wrong in `--data`. |
+| `... must be a whole number above 0 ... Nothing was sent to Mayar.` | A guard refused a money field (`amount`, `price`, `rate`). | Use a whole Rupiah amount, for example `10000`, not `10000.5`. |
+| `expiredAt is in the past ...` | A guard refused an expiry date. | Use a future date (ISO text or epoch). |
+| `--limit must be a whole number from 1 to 50` | The page size is out of range. | Use `--limit 1` to `--limit 50`, and `--after <cursor>` for the next page. |
+| `Invalid JSON in --data: ...` / `Cannot read --data file ...` | `--data` is not valid JSON, or the file does not exist. | Put inline JSON in single quotes: `--data '{"name":"x"}'`, or use `--data @file.json`. |
+| `Refused webhook URL ...` | The webhook URL is not a public http(s) address. | Use a public URL. For local testing, use a public tunnel URL. |
+| `HTML-like content in ...` | Customer-facing text contains markup. | Remove the markup. In a terminal, you can confirm and send it anyway. |
+| `... failed (429) — rate limited` + `Hint: Gave up after 3 retries` | Mayar rate-limited the requests. | Wait for the time in the hint, then run again. Slow down loops in scripts. |
+| `... failed (5xx)` + `Hint: This is an error on the Mayar side` | Mayar had an internal error. | Try again later. If it keeps failing, run with `MAYAR_DEBUG=1` and send the output to Mayar. |
+| `Request timed out after 30s` | Mayar did not answer. | Try again, or set `MAYAR_TIMEOUT_MS=60000`. |
+| `Network error on ... ENOTFOUND` / `ECONNREFUSED` | No connection to the API host. | Check your network, and `MAYAR_API_URL` if you set it. |
+| `Invalid endpoint "..." in .../config.json` | The saved environment is not `sandbox` or `production`. | Run `mayar config reset`, or pass `--sandbox` / `--production`. |
+| `Warning: ... is the old Mayar sandbox domain` | `MAYAR_SANDBOX_LEGACY=1` or a `mayar.club` URL is in use. | Remove it. `--sandbox` uses `api.mayar.io`. |
+| `Warning: unknown flag --...` | A flag name is misspelled, and it took the next argument as its value. | Check the spelling with `mayar --help`. |
+| `mayar customer update needs the customer ID` | `customer update` takes the customer ID, not the old email. | `mayar customer search <email>` shows the ID. |
+
+## Security
+
+The CLI adds these client-side checks. They protect you even when the API
+accepts the input.
+
+- **Webhook URLs.** `webhook register` and `webhook test` refuse a URL that is
+  not `http`/`https`, that has credentials in it, that uses a well-known
+  non-HTTP port (for example 22, 3306, 6379), or whose host is or resolves to a
+  loopback, private, link-local, cloud-metadata or reserved address. There is
+  no override: a webhook receiver must be public. Nothing is sent when a URL is
+  refused.
+- **Terminal output.** Text from the API is cleaned before it is printed, so a
+  stored value cannot send escape sequences to your terminal. `--json` output
+  escapes these characters and still parses to the same data.
+- **HTML in customer fields.** `customer create`, `customer update` and
+  `invoice create` check customer-facing text for HTML. In a terminal the CLI
+  asks before it sends; without a terminal (scripts, agents) it refuses.
+- **Errors.** Server errors (5xx) and non-JSON replies are summarised. Stack
+  traces and HTML error pages are not printed unless you set `MAYAR_DEBUG=1`.
+
+Some problems can only be fixed in the Mayar API itself, for example how the
+server stores and shows text, and its rate limits. The checks above reduce the
+risk from the CLI side. They do not replace fixes on the server.

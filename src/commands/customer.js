@@ -1,15 +1,15 @@
 const api = require('../api');
 const ui = require('../ui');
-const { checkResp, readData } = require('../util');
+const { readData, confirmPlainText } = require('../util');
 
 const USAGE = 'Usage: mayar customer <list|create|search|update|magic-link>';
+const CUSTOMER_TEXT_FIELDS = ['name', 'email', 'mobile', 'address', 'description'];
 
 async function run({ apiKey, flags, positional }) {
   const [sub, ...rest] = positional;
   switch (sub) {
     case 'list': {
       const res = await api.request('GET', '/hl/v2/customers', { apiKey });
-      checkResp(res);
       if (flags.json) return ui.jsonOut(res.body);
       const data = (res.body && res.body.data) || [];
       const rows = data.map((c) => ({
@@ -21,22 +21,30 @@ async function run({ apiKey, flags, positional }) {
     case 'create': {
       const body = readData(flags.data);
       if (!body) throw new Error('mayar customer create requires --data \'{"name":"...","email":"...","mobile":"..."}\'');
+      await confirmPlainText(body, CUSTOMER_TEXT_FIELDS);
       const res = await api.request('POST', '/hl/v2/customers/create', { apiKey, body });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'search': {
       if (!rest[0]) throw new Error('Usage: mayar customer search <email>');
       const res = await api.request('GET', '/hl/v2/customers/detail', {
         apiKey, query: { email: rest[0] },
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'update': {
-      if (rest.length < 2) throw new Error('Usage: mayar customer update <fromEmail> <toEmail>');
-      const res = await api.request('POST', '/hl/v2/customers/update', {
-        apiKey, body: { fromEmail: rest[0], toEmail: rest[1] },
+      if (rest.length < 2) throw new Error('Usage: mayar customer update <customerId> <newEmail>');
+      // v2 updates by customer ID: POST /hl/v2/customers/{id}/update. The old
+      // /hl/v2/customers/update (by email) answers 404 (checked 2026-11-25).
+      if (rest[0].includes('@')) {
+        throw new Error('mayar customer update needs the customer ID, not the email. ' +
+          `Find the ID with: mayar customer search ${rest[0]}`);
+      }
+      await confirmPlainText({ toEmail: rest[1] }, ['toEmail']);
+      const res = await api.request('POST', `/hl/v2/customers/${encodeURIComponent(rest[0])}/update`, {
+        apiKey, body: { toEmail: rest[1] },
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     case 'magic-link':
     case 'magiclink': {
@@ -44,7 +52,7 @@ async function run({ apiKey, flags, positional }) {
       const res = await api.request('POST', '/hl/v2/customers/portal-login', {
         apiKey, body: { email: rest[0] },
       });
-      checkResp(res); ui.jsonOut(res.body); return;
+      ui.jsonOut(res.body); return;
     }
     default:
       throw new Error(USAGE);
