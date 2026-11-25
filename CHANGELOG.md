@@ -36,7 +36,8 @@ All notable changes to `mayar` (mayar-cli) are listed here. The format follows
 - `mayar skill install` now runs the official installer
   (`npx skills add mayarid/skills --skill mayar-v2`) with `--target` and the
   new `--global`. It no longer asks for an API key. `--force` is no longer
-  needed.
+  needed. The old `SKILL.md` in this repo is now a short stub that points to
+  `mayar-v2`, so `skill install` on older CLI versions still works.
 - An invalid `endpoint` in the config file is refused instead of silently
   becoming production.
 - An unknown flag (for example `--jsno`) prints a warning, because it takes the
